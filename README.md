@@ -24,7 +24,7 @@ Recrear los juegos/modos de Futbol11, pero:
 
 ## Status
 
-🚧 Fase de idea. Sin código todavía — solo definiendo el alcance.
+Fase de idea. Sin código todavía — solo definiendo el alcance.
 
 ## Equipo
 
