@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Adivina el Jugador · FutTrivia</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+  <nav class="navbar">
+    <div class="nav-inner">
+      <a href="/" class="nav-logo">
+        <span>⚽</span>
+        <span>FutTrivia</span>
+      </a>
+      <div class="nav-links">
+        <a href="/" class="nav-link">Juegos</a>
+        <a href="#" class="nav-link nav-cta">Entrar</a>
+      </div>
+    </div>
+  </nav>
+
+  <section class="wordle-page">
+    <div class="wordle-header">
+      <a href="/" class="back-link">← Volver</a>
+      <h1 class="wordle-title">Adivina el Jugador</h1>
+      <p class="wordle-sub">Tienes <strong>8 intentos</strong>.</p>
+    </div>
+
+    <div class="wordle-columns">
+      <span>Jugador</span>
+      <span>Posición</span>
+      <span>Liga</span>
+      <span>Equipo</span>
+      <span>País</span>
+      <span>Edad</span>
+      <span>Dorsal</span>
+    </div>
+
+    <div class="wordle-board" id="board">
+      <p class="wordle-placeholder">Escribe un jugador abajo para empezar 👇</p>
+    </div>
+
+    <div class="wordle-input-area">
+      <input
+        type="text"
+        id="player-input"
+        class="wordle-input"
+        placeholder="Ej: Lionel Messi"
+        autocomplete="off"
+      />
+      <button class="btn-primary" onclick="submitGuess()">Intentar</button>
+    </div>
+
+    <div class="wordle-result hidden" id="result-msg"></div>
+  </section>
+
+  <footer class="footer">
+    <div class="footer-inner">
+      <span>⚽ FutTrivia</span>
+      <span>Proyecto de verano 2025</span>
+    </div>
+  </footer>
+
+</body>
+</html>
