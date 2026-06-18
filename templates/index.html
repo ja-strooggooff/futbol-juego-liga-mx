@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FutTrivia · Liga MX</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+  <!-- NAVBAR -->
+  <nav class="navbar">
+    <div class="nav-inner">
+      <a href="/" class="nav-logo">
+        <span>⚽</span>
+        <span>FutTrivia</span>
+      </a>
+      <div class="nav-links">
+        <a href="/" class="nav-link">Juegos</a>
+        <a href="#" class="nav-link nav-cta">Entrar</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="hero-inner">
+      <p class="hero-eyebrow">Reto diario · Liga MX</p>
+      <h1 class="hero-title">¿Cuánto sabes<br>de fútbol?</h1>
+      <p class="hero-subtitle">
+        Un nuevo reto cada día. Adivina jugadores, escudos y más.<br>
+        Compite con tus amigos y demuestra quién la sabe de verdad.
+      </p>
+      <a href="/wordle" class="btn-primary">Jugar ahora →</a>
+    </div>
+    <div class="hero-ball">⚽</div>
+  </section>
+
+  <!-- JUEGOS -->
+  <section class="games-section">
+    <div class="section-header">
+      <h2 class="section-title">Elige tu juego</h2>
+      <p class="section-sub">Nuevos retos cada día a la medianoche</p>
+    </div>
+
+    <div class="games-grid">
+      {% for juego in juegos %}
+      <div class="game-card {{ 'game-card--locked' if not juego.disponible }}">
+        <div class="card-icon">{{ juego.icono }}</div>
+        <div class="card-body">
+          <div class="card-top">
+            <h3 class="card-title">{{ juego.nombre }}</h3>
+            <span class="card-badge card-badge--{{ juego.dificultad | lower }}">
+              {{ juego.dificultad }}
+            </span>
+          </div>
+          <p class="card-desc">{{ juego.descripcion }}</p>
+        </div>
+        <div class="card-footer">
+          {% if juego.disponible %}
+            <a href="/{{ juego.id }}" class="btn-card">Jugar →</a>
+          {% else %}
+            <span class="btn-card btn-card--soon">Próximamente</span>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <!-- CÓMO FUNCIONA -->
+  <section class="how-section">
+    <div class="how-inner">
+      <h2 class="section-title">¿Cómo funciona?</h2>
+      <div class="how-grid">
+        <div class="how-step">
+          <span class="how-num">1</span>
+          <h3>Elige un juego</h3>
+          <p>Cada modo pone a prueba un tipo diferente de conocimiento futbolero.</p>
+        </div>
+        <div class="how-step">
+          <span class="how-num">2</span>
+          <h3>Adivina hoy</h3>
+          <p>Todos tienen el mismo reto ese día. Solo tienes una oportunidad.</p>
+        </div>
+        <div class="how-step">
+          <span class="how-num">3</span>
+          <h3>Comparte</h3>
+          <p>Comparte tu resultado con emojis sin revelar la respuesta.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="footer-inner">
+      <span>⚽ FutTrivia</span>
+      <span>Proyecto de verano 2025</span>
+    </div>
+  </footer>
+
+</body>
+</html>
