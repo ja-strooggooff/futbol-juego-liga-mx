@@ -36,3 +36,5 @@ Fase de idea. Sin código todavía — solo definiendo el alcance.
 
 TBD — a decidir en equipo (probablemente algo de juego en tiempo real 
 necesite websockets / un backend con soporte multijugador)
+
+Test
