@@ -34,6 +34,45 @@ JUGADORES = [
     {"nombre": "Jude Bellingham", "posicion": "Mediocampista", "liga": "La Liga", "equipo": "Real Madrid", "pais": "Inglaterra", "edad": 21, "dorsal": 5},
 ]
 
+# ================================================================
+#  VALIDACIÓN DE ENTRADAS (INPUTS)
+#
+#  Nunca hay que confiar en lo que manda el navegador. Alguien
+#  puede mandar datos vacíos, del tipo equivocado, fuera de rango,
+#  o directamente basura (a propósito o por error). Estas funciones
+#  limpian y validan todo antes de usarlo.
+# ================================================================
+
+def obtener_json_seguro():
+    """
+    Lee el JSON del request de forma segura.
+    Si no hay JSON, está mal formado, o no es un objeto {},
+    devuelve un diccionario vacío en vez de tronar el servidor.
+    """
+    data = request.get_json(silent=True)
+    return data if isinstance(data, dict) else {}
+
+
+def limpiar_texto(valor, max_largo=80):
+    """
+    Limpia un texto que viene del usuario:
+    - Si no es texto, devuelve vacío
+    - Quita espacios al inicio/final
+    - Lo recorta si es absurdamente largo
+    """
+    if not isinstance(valor, str):
+        return ""
+    return valor.strip()[:max_largo]
+
+
+def es_entero_en_rango(valor, minimo, maximo):
+    """
+    Revisa que 'valor' sea un número entero dentro de un rango.
+    Ojo: en Python, True/False cuentan como 1/0 — por eso
+    descartamos explícitamente los booleanos.
+    """
+    return isinstance(valor, int) and not isinstance(valor, bool) and minimo <= valor <= maximo
+
 
 # ================================================================
 #  LÓGICA DEL JUEGO
@@ -105,14 +144,16 @@ def intentar():
         return jsonify({"error": "El juego ya terminó."}), 400
 
     # request.get_json() lee el JSON que mandó JavaScript con fetch()
-    data = request.get_json()
-    nombre_intento = (data.get("nombre") or "").strip().lower()
+    data = obtener_json_seguro()
+    nombre_intento = limpiar_texto(data.get("nombre", "")).lower()
 
     # Buscar el jugador que el usuario escribió
     jugador = next(
         (j for j in JUGADORES if j["nombre"].lower() == nombre_intento),
         None
     )
+
+    
     if jugador is None:
         return jsonify({"error": "Jugador no encontrado"}), 404
 
@@ -274,13 +315,16 @@ def grid_intentar():
     if "grid" not in session or session["grid"] is None:
         return jsonify({"error": "No hay grid activo"}), 400
 
-    data = request.get_json()
+    data = obtener_json_seguro()
     fila = data.get("fila")
     columna = data.get("columna")
-    nombre_intento = (data.get("nombre") or "").strip().lower()
+    nombre_intento = limpiar_texto(data.get("nombre", "")).lower()
 
-    if fila is None or columna is None:
-        return jsonify({"error": "Faltan fila/columna"}), 400
+    if not es_entero_en_rango(fila, 0, 2) or not es_entero_en_rango(columna, 0, 2):
+        return jsonify({"error": "Fila y columna deben ser números entre 0 y 2"}), 400
+
+    if not nombre_intento:
+        return jsonify({"error": "Nombre de jugador requerido"}), 400
 
     celda_key = f"{fila}-{columna}"
 
@@ -437,9 +481,11 @@ def conexiones_intentar():
     if session["conexiones_errores"] >= MAX_ERRORES_CONEXIONES or len(resueltos) == len(juego["grupos"]):
         return jsonify({"error": "El juego ya terminó"}), 400
 
-    data = request.get_json()
+    data = obtener_json_seguro()
     seleccion = data.get("jugadores", [])
-    seleccion_normalizada = set(n.strip().lower() for n in seleccion)
+    if not isinstance(seleccion, list):
+        seleccion = []
+    seleccion_normalizada = set(limpiar_texto(n).lower() for n in seleccion if isinstance(n, str))
 
     grupo_encontrado = None
     for valor, nombres in juego["grupos"].items():
@@ -590,11 +636,11 @@ def trivia_responder():
     if actual >= total:
         return jsonify({"error": "El juego ya terminó"}), 400
 
-    data = request.get_json()
+    data = obtener_json_seguro()
     opcion_elegida = data.get("opcion")
 
-    if opcion_elegida is None:
-        return jsonify({"error": "Falta la opción elegida"}), 400
+    if not es_entero_en_rango(opcion_elegida, 0, 3):
+        return jsonify({"error": "La opción debe ser un número entre 0 y 3"}), 400
 
     indice_real = session["trivia_preguntas"][actual]
     pregunta = PREGUNTAS_TRIVIA[indice_real]
