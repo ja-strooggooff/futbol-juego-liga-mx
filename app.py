@@ -7,6 +7,7 @@
 # ================================================================
 
 import random
+import datetime
 from flask import Flask, render_template, jsonify, request, session
 
 app = Flask(__name__)
@@ -78,16 +79,40 @@ def es_entero_en_rango(valor, minimo, maximo):
 #  LÓGICA DEL JUEGO
 # ================================================================
 
-def iniciar_nueva_partida():
     """
     Elige un jugador secreto al azar y resetea el contador de intentos.
     Por ahora es al azar; cuando hagamos el "reto diario" esta función
     cambiará para elegir siempre el mismo jugador en el mismo día.
     """
-    jugador_secreto = random.choice(JUGADORES)
-    session["secreto"] = jugador_secreto["nombre"]
-    session["intentos"] = 0
-    session["terminado"] = False
+def obtener_jugador_del_dia():
+    hoy = datetime.date.today().isoformat()
+    generador = random.Random(hoy)
+    return generador.choice(JUGADORES)
+
+
+def iniciar_partida_wordle(modo):
+    if modo == "diario":
+        jugador_secreto = obtener_jugador_del_dia()
+    else:
+        jugador_secreto = random.choice(JUGADORES)
+
+    session[f"wordle_{modo}_secreto"] = jugador_secreto["nombre"]
+    session[f"wordle_{modo}_intentos"] = 0
+    session[f"wordle_{modo}_terminado"] = False
+
+    if modo == "diario":
+        session["wordle_diario_fecha"] = datetime.date.today().isoformat()
+
+
+def necesita_partida_nueva(modo):
+    clave_secreto = f"wordle_{modo}_secreto"
+    if clave_secreto not in session:
+        return True
+    if modo == "diario":
+        fecha_guardada = session.get("wordle_diario_fecha")
+        if fecha_guardada != datetime.date.today().isoformat():
+            return True
+    return False
 
 
 # ================================================================
@@ -105,13 +130,18 @@ def index():
     return render_template("index.html", juegos=juegos)
 
 
-@app.route("/wordle")
-def wordle():
+
     # Si el usuario no tiene partida activa, le iniciamos una.
     # "secreto" not in session significa "este usuario nunca ha jugado
     # o ya terminó su última partida sin reiniciar".
-    if "secreto" not in session:
-        iniciar_nueva_partida()
+
+@app.route("/wordle")
+def wordle():
+    modo = request.args.get("modo", "practica")
+    if modo not in ("diario", "practica"):
+        modo = "practica"
+    if necesita_partida_nueva(modo):
+        iniciar_partida_wordle(modo)
     return render_template("wordle.html")
 
 
@@ -126,8 +156,7 @@ def lista_jugadores():
     return jsonify(nombres)
 
 
-@app.route("/api/intentar", methods=["POST"])
-def intentar():
+
     """
     Esta es la ruta más importante del juego.
     Recibe el nombre que el usuario intentó adivinar, lo compara
@@ -137,79 +166,80 @@ def intentar():
     El jugador secreto JAMÁS se manda al frontend hasta que
     el juego termina (ganó o se acabaron los intentos).
     """
-    if "secreto" not in session:
+@app.route("/api/intentar", methods=["POST"])
+def intentar():
+    data = obtener_json_seguro()
+    modo = data.get("modo", "practica")
+    if modo not in ("diario", "practica"):
+        modo = "practica"
+
+    clave_secreto = f"wordle_{modo}_secreto"
+    clave_intentos = f"wordle_{modo}_intentos"
+    clave_terminado = f"wordle_{modo}_terminado"
+
+    if clave_secreto not in session:
         return jsonify({"error": "No hay partida activa. Recarga la página."}), 400
 
-    if session.get("terminado"):
+    if session.get(clave_terminado):
         return jsonify({"error": "El juego ya terminó."}), 400
 
-    # request.get_json() lee el JSON que mandó JavaScript con fetch()
-    data = obtener_json_seguro()
     nombre_intento = limpiar_texto(data.get("nombre", "")).lower()
+    if not nombre_intento:
+        return jsonify({"error": "Nombre de jugador requerido"}), 400
 
-    # Buscar el jugador que el usuario escribió
-    jugador = next(
-        (j for j in JUGADORES if j["nombre"].lower() == nombre_intento),
-        None
-    )
-
-    
+    jugador = next((j for j in JUGADORES if j["nombre"].lower() == nombre_intento), None)
     if jugador is None:
         return jsonify({"error": "Jugador no encontrado"}), 404
 
-    # Buscar el jugador secreto usando el nombre guardado en sesión
-    secreto = next(j for j in JUGADORES if j["nombre"] == session["secreto"])
+    secreto = next(j for j in JUGADORES if j["nombre"] == session[clave_secreto])
 
-    # Comparar atributos de texto (posición, liga, equipo, país)
     resultado = {}
     for attr in ["posicion", "liga", "equipo", "pais"]:
         valor = jugador[attr]
-        resultado[attr] = {
-            "valor": valor,
-            "estado": "correcto" if valor == secreto[attr] else "incorrecto",
-        }
+        resultado[attr] = {"valor": valor, "estado": "correcto" if valor == secreto[attr] else "incorrecto"}
 
-    # Comparar atributos numéricos (edad, dorsal) — estos llevan pista de dirección
     for attr in ["edad", "dorsal"]:
         valor = jugador[attr]
         if valor == secreto[attr]:
             resultado[attr] = {"valor": valor, "estado": "correcto"}
         else:
-            resultado[attr] = {
-                "valor": valor,
-                "estado": "incorrecto",
-                "pista": "subir" if valor < secreto[attr] else "bajar",
-            }
+            resultado[attr] = {"valor": valor, "estado": "incorrecto", "pista": "subir" if valor < secreto[attr] else "bajar"}
 
-    # Actualizar el estado de la partida en la sesión
-    session["intentos"] += 1
+    session[clave_intentos] += 1
     gano = jugador["nombre"] == secreto["nombre"]
 
-    if gano or session["intentos"] >= 8:
-        session["terminado"] = True
+    if gano or session[clave_intentos] >= 8:
+        session[clave_terminado] = True
 
     return jsonify({
+        "modo": modo,
         "nombre": jugador["nombre"],
         "atributos": resultado,
         "gano": gano,
-        "intentos": session["intentos"],
-        "intentos_restantes": 8 - session["intentos"],
-        "terminado": session["terminado"],
-        # Solo revelamos el nombre del secreto cuando el juego termina
-        "secreto": secreto["nombre"] if session["terminado"] else None,
+        "intentos": session[clave_intentos],
+        "terminado": session[clave_terminado],
+        "secreto": secreto["nombre"] if session[clave_terminado] else None,
     })
 
 
-@app.route("/api/reiniciar", methods=["POST"])
-def reiniciar():
+
     """
     Empieza una partida nueva manualmente.
     Esto es temporal para que puedan probar — cuando hagamos el
     reto diario, el jugador secreto cambiará solo a la medianoche
     y esta ruta ya no hará falta.
     """
-    iniciar_nueva_partida()
+@app.route("/api/wordle/reiniciar", methods=["POST"])
+def wordle_reiniciar():
+    data = obtener_json_seguro()
+    modo = data.get("modo", "practica")
+
+    if modo == "diario":
+        return jsonify({"error": "El reto diario no se puede reiniciar. Vuelve mañana."}), 400
+
+    iniciar_partida_wordle("practica")
     return jsonify({"ok": True})
+
 
 # ================================================================
 #  JUEGO: GRID DE EQUIPOS
