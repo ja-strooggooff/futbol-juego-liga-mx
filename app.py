@@ -21,6 +21,47 @@ app.secret_key = "cambia-esto-luego-con-env-var"
 
 
 # ================================================================
+#  HISTORIAL DE PARTIDAS
+#
+#  Como todavía no tenemos base de datos, el historial vive en
+#  la sesión del navegador (la misma cookie de siempre). Se guardan
+#  solo las últimas 20 partidas para no saturar la cookie.
+# ================================================================
+
+MAX_HISTORIAL = 20
+
+
+def registrar_resultado(juego, modo, resultado, detalle=None):
+    """
+    Guarda una partida terminada en el historial.
+    juego: "wordle", "escudo", "trivia", "grid", "conexiones"
+    resultado: "ganado", "perdido", "completado"
+    detalle: diccionario opcional con datos extra (intentos, aciertos, etc.)
+    """
+    if "historial" not in session:
+        session["historial"] = []
+
+    entrada = {
+        "juego": juego,
+        "modo": modo,
+        "fecha": datetime.date.today().isoformat(),
+        "resultado": resultado,
+        "detalle": detalle or {},
+    }
+
+    historial = session["historial"]
+    historial.append(entrada)
+    session["historial"] = historial[-MAX_HISTORIAL:]
+    session.modified = True
+
+
+@app.route("/api/historial")
+def historial():
+    """Devuelve el historial del usuario, más reciente primero."""
+    return jsonify({"historial": list(reversed(session.get("historial", [])))})
+
+
+# ================================================================
 #  BASE DE DATOS TEMPORAL DE JUGADORES
 #  (la migraremos a SQLite más adelante)
 # ================================================================
@@ -213,6 +254,10 @@ def intentar():
 
     if gano or session[clave_intentos] >= 8:
         session[clave_terminado] = True
+        registrar_resultado("wordle", modo, "ganado" if gano else "perdido", {
+            "intentos": session[clave_intentos],
+            "jugador": secreto["nombre"],
+        })
 
     return jsonify({
         "modo": modo,
@@ -443,6 +488,10 @@ def grid_intentar():
         session.modified = True
 
     total = len(session[clave_resueltas])
+
+    if total == 9:
+        registrar_resultado("grid", modo, "completado", {"resueltas": total})
+
     return jsonify({
         "modo": modo,
         "correcto": correcto,
@@ -644,6 +693,12 @@ def conexiones_intentar():
         len(session[clave_resueltos]) == len(juego["grupos"])
         or session[clave_errores] >= MAX_ERRORES_CONEXIONES
     )
+
+    if terminado:
+        gano_todo = len(session[clave_resueltos]) == len(juego["grupos"])
+        registrar_resultado("conexiones", modo, "ganado" if gano_todo else "perdido", {
+            "errores": session[clave_errores],
+        })
 
     return jsonify({
         "modo": modo,
@@ -860,6 +915,12 @@ def trivia_responder():
     session[clave_actual] += 1
     terminado = session[clave_actual] >= total
 
+    if terminado:
+        registrar_resultado("trivia", modo, "completado", {
+            "aciertos": session[clave_aciertos],
+            "total": total,
+        })
+
     return jsonify({
         "modo": modo,
         "correcto": correcto,
@@ -1031,6 +1092,10 @@ def escudo_intentar():
     session[clave_intentos] += 1
     if gano or session[clave_intentos] >= MAX_INTENTOS_ESCUDO:
         session[clave_terminado] = True
+        registrar_resultado("escudo", modo, "ganado" if gano else "perdido", {
+            "intentos": session[clave_intentos],
+            "equipo": secreto,
+        })
 
     return jsonify({
         "modo": modo,
