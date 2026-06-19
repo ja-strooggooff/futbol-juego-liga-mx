@@ -265,6 +265,17 @@ def construir_categorias():
             categorias.setdefault(clave, []).append(jugador["nombre"])
     return categorias
 
+def obtener_generador(modo, prefijo):
+    """
+    Si es modo diario, regresa un generador con semilla fija basada
+    en la fecha de hoy (mismo resultado para todos hoy).
+    Si es práctica, regresa un generador nuevo y aleatorio cada vez.
+    """
+    if modo == "diario":
+        hoy = datetime.date.today().isoformat()
+        return random.Random(f"{prefijo}-{hoy}")
+    return random.Random()
+
 
 def generar_grid(max_intentos=500):
     """
@@ -600,13 +611,27 @@ PREGUNTAS_TRIVIA = [
 PREGUNTAS_POR_PARTIDA = 5
 
 
-def iniciar_nueva_trivia():
-    """Elige 5 preguntas al azar del banco completo, sin repetir."""
+def iniciar_nueva_trivia(modo):
+    generador = obtener_generador(modo, "trivia")
     indices = list(range(len(PREGUNTAS_TRIVIA)))
-    random.shuffle(indices)
-    session["trivia_preguntas"] = indices[:PREGUNTAS_POR_PARTIDA]
-    session["trivia_actual"] = 0
-    session["trivia_aciertos"] = 0
+    generador.shuffle(indices)
+
+    session[f"trivia_{modo}_preguntas"] = indices[:PREGUNTAS_POR_PARTIDA]
+    session[f"trivia_{modo}_actual"] = 0
+    session[f"trivia_{modo}_aciertos"] = 0
+
+    if modo == "diario":
+        session["trivia_diario_fecha"] = datetime.date.today().isoformat()
+
+
+def necesita_trivia_nueva(modo):
+    clave = f"trivia_{modo}_preguntas"
+    if clave not in session:
+        return True
+    if modo == "diario":
+        if session.get("trivia_diario_fecha") != datetime.date.today().isoformat():
+            return True
+    return False
 
 
 def pregunta_publica(indice_pregunta):
@@ -620,26 +645,44 @@ def pregunta_publica(indice_pregunta):
 
 @app.route("/trivia")
 def trivia_page():
-    if "trivia_preguntas" not in session:
-        iniciar_nueva_trivia()
+    modo = request.args.get("modo", "practica")
+    if modo not in ("diario", "practica"):
+        modo = "practica"
+    if necesita_trivia_nueva(modo):
+        iniciar_nueva_trivia(modo)
     return render_template("trivia.html")
 
 
 @app.route("/api/trivia")
 def trivia_info():
-    """Devuelve la pregunta actual del usuario, o el resultado final si ya terminó."""
-    if "trivia_preguntas" not in session:
+    modo = request.args.get("modo", "practica")
+    if modo not in ("diario", "practica"):
+        modo = "practica"
+
+    clave_preguntas = f"trivia_{modo}_preguntas"
+    if clave_preguntas not in session:
         return jsonify({"error": "No hay partida activa"}), 400
 
-    actual = session["trivia_actual"]
-    total = len(session["trivia_preguntas"])
+    actual = session[f"trivia_{modo}_actual"]
+    total = len(session[clave_preguntas])
 
     if actual >= total:
         return jsonify({
+            "modo": modo,
             "terminado": True,
-            "aciertos": session["trivia_aciertos"],
+            "aciertos": session[f"trivia_{modo}_aciertos"],
             "total": total,
         })
+
+    indice_real = session[clave_preguntas][actual]
+    return jsonify({
+        "modo": modo,
+        "terminado": False,
+        "numero_pregunta": actual + 1,
+        "total_preguntas": total,
+        "aciertos": session[f"trivia_{modo}_aciertos"],
+        **pregunta_publica(indice_real),
+    })
 
     indice_real = session["trivia_preguntas"][actual]
     return jsonify({
@@ -653,46 +696,55 @@ def trivia_info():
 
 @app.route("/api/trivia/responder", methods=["POST"])
 def trivia_responder():
-    """
-    Recibe el índice de la opción que eligió el usuario (0, 1, 2 o 3),
-    la compara contra la respuesta correcta, y avanza a la siguiente pregunta.
-    """
-    if "trivia_preguntas" not in session:
+    data = obtener_json_seguro()
+    modo = data.get("modo", "practica")
+    if modo not in ("diario", "practica"):
+        modo = "practica"
+
+    clave_preguntas = f"trivia_{modo}_preguntas"
+    if clave_preguntas not in session:
         return jsonify({"error": "No hay partida activa"}), 400
 
-    actual = session["trivia_actual"]
-    total = len(session["trivia_preguntas"])
+    clave_actual = f"trivia_{modo}_actual"
+    clave_aciertos = f"trivia_{modo}_aciertos"
+    actual = session[clave_actual]
+    total = len(session[clave_preguntas])
 
     if actual >= total:
         return jsonify({"error": "El juego ya terminó"}), 400
 
-    data = obtener_json_seguro()
     opcion_elegida = data.get("opcion")
-
     if not es_entero_en_rango(opcion_elegida, 0, 3):
         return jsonify({"error": "La opción debe ser un número entre 0 y 3"}), 400
 
-    indice_real = session["trivia_preguntas"][actual]
+    indice_real = session[clave_preguntas][actual]
     pregunta = PREGUNTAS_TRIVIA[indice_real]
     correcto = (opcion_elegida == pregunta["correcta"])
 
     if correcto:
-        session["trivia_aciertos"] += 1
+        session[clave_aciertos] += 1
 
-    session["trivia_actual"] += 1
-    terminado = session["trivia_actual"] >= total
+    session[clave_actual] += 1
+    terminado = session[clave_actual] >= total
 
     return jsonify({
+        "modo": modo,
         "correcto": correcto,
         "respuesta_correcta": pregunta["correcta"],
-        "aciertos": session["trivia_aciertos"],
+        "aciertos": session[clave_aciertos],
         "terminado": terminado,
     })
 
 
 @app.route("/api/trivia/reiniciar", methods=["POST"])
 def trivia_reiniciar():
-    iniciar_nueva_trivia()
+    data = obtener_json_seguro()
+    modo = data.get("modo", "practica")
+
+    if modo == "diario":
+        return jsonify({"error": "La trivia de hoy no se puede reiniciar. Vuelve mañana."}), 400
+
+    iniciar_nueva_trivia("practica")
     return jsonify({"ok": True})
 
 
