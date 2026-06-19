@@ -277,6 +277,7 @@ def obtener_generador(modo, prefijo):
     return random.Random()
 
 
+
 def generar_grid(generador, max_intentos=500):
     categorias_dict = construir_categorias()
     categorias_utiles = [c for c in categorias_dict.items() if len(c[1]) >= 2]
@@ -632,13 +633,27 @@ PREGUNTAS_TRIVIA = [
 PREGUNTAS_POR_PARTIDA = 5
 
 
-def iniciar_nueva_trivia():
-    """Elige 5 preguntas al azar del banco completo, sin repetir."""
+def iniciar_nueva_trivia(modo):
+    generador = obtener_generador(modo, "trivia")
     indices = list(range(len(PREGUNTAS_TRIVIA)))
-    random.shuffle(indices)
-    session["trivia_preguntas"] = indices[:PREGUNTAS_POR_PARTIDA]
-    session["trivia_actual"] = 0
-    session["trivia_aciertos"] = 0
+    generador.shuffle(indices)
+
+    session[f"trivia_{modo}_preguntas"] = indices[:PREGUNTAS_POR_PARTIDA]
+    session[f"trivia_{modo}_actual"] = 0
+    session[f"trivia_{modo}_aciertos"] = 0
+
+    if modo == "diario":
+        session["trivia_diario_fecha"] = datetime.date.today().isoformat()
+
+
+def necesita_trivia_nueva(modo):
+    clave = f"trivia_{modo}_preguntas"
+    if clave not in session:
+        return True
+    if modo == "diario":
+        if session.get("trivia_diario_fecha") != datetime.date.today().isoformat():
+            return True
+    return False
 
 
 def pregunta_publica(indice_pregunta):
@@ -652,26 +667,44 @@ def pregunta_publica(indice_pregunta):
 
 @app.route("/trivia")
 def trivia_page():
-    if "trivia_preguntas" not in session:
-        iniciar_nueva_trivia()
+    modo = request.args.get("modo", "practica")
+    if modo not in ("diario", "practica"):
+        modo = "practica"
+    if necesita_trivia_nueva(modo):
+        iniciar_nueva_trivia(modo)
     return render_template("trivia.html")
 
 
 @app.route("/api/trivia")
 def trivia_info():
-    """Devuelve la pregunta actual del usuario, o el resultado final si ya terminó."""
-    if "trivia_preguntas" not in session:
+    modo = request.args.get("modo", "practica")
+    if modo not in ("diario", "practica"):
+        modo = "practica"
+
+    clave_preguntas = f"trivia_{modo}_preguntas"
+    if clave_preguntas not in session:
         return jsonify({"error": "No hay partida activa"}), 400
 
-    actual = session["trivia_actual"]
-    total = len(session["trivia_preguntas"])
+    actual = session[f"trivia_{modo}_actual"]
+    total = len(session[clave_preguntas])
 
     if actual >= total:
         return jsonify({
+            "modo": modo,
             "terminado": True,
-            "aciertos": session["trivia_aciertos"],
+            "aciertos": session[f"trivia_{modo}_aciertos"],
             "total": total,
         })
+
+    indice_real = session[clave_preguntas][actual]
+    return jsonify({
+        "modo": modo,
+        "terminado": False,
+        "numero_pregunta": actual + 1,
+        "total_preguntas": total,
+        "aciertos": session[f"trivia_{modo}_aciertos"],
+        **pregunta_publica(indice_real),
+    })
 
     indice_real = session["trivia_preguntas"][actual]
     return jsonify({
@@ -685,47 +718,200 @@ def trivia_info():
 
 @app.route("/api/trivia/responder", methods=["POST"])
 def trivia_responder():
-    """
-    Recibe el índice de la opción que eligió el usuario (0, 1, 2 o 3),
-    la compara contra la respuesta correcta, y avanza a la siguiente pregunta.
-    """
-    if "trivia_preguntas" not in session:
+    data = obtener_json_seguro()
+    modo = data.get("modo", "practica")
+    if modo not in ("diario", "practica"):
+        modo = "practica"
+
+    clave_preguntas = f"trivia_{modo}_preguntas"
+    if clave_preguntas not in session:
         return jsonify({"error": "No hay partida activa"}), 400
 
-    actual = session["trivia_actual"]
-    total = len(session["trivia_preguntas"])
+    clave_actual = f"trivia_{modo}_actual"
+    clave_aciertos = f"trivia_{modo}_aciertos"
+    actual = session[clave_actual]
+    total = len(session[clave_preguntas])
 
     if actual >= total:
         return jsonify({"error": "El juego ya terminó"}), 400
 
-    data = obtener_json_seguro()
     opcion_elegida = data.get("opcion")
-
     if not es_entero_en_rango(opcion_elegida, 0, 3):
         return jsonify({"error": "La opción debe ser un número entre 0 y 3"}), 400
 
-    indice_real = session["trivia_preguntas"][actual]
+    indice_real = session[clave_preguntas][actual]
     pregunta = PREGUNTAS_TRIVIA[indice_real]
     correcto = (opcion_elegida == pregunta["correcta"])
 
     if correcto:
-        session["trivia_aciertos"] += 1
+        session[clave_aciertos] += 1
 
-    session["trivia_actual"] += 1
-    terminado = session["trivia_actual"] >= total
+    session[clave_actual] += 1
+    terminado = session[clave_actual] >= total
 
     return jsonify({
+        "modo": modo,
         "correcto": correcto,
         "respuesta_correcta": pregunta["correcta"],
-        "aciertos": session["trivia_aciertos"],
+        "aciertos": session[clave_aciertos],
         "terminado": terminado,
     })
 
 
 @app.route("/api/trivia/reiniciar", methods=["POST"])
 def trivia_reiniciar():
-    iniciar_nueva_trivia()
+    data = obtener_json_seguro()
+    modo = data.get("modo", "practica")
+
+    if modo == "diario":
+        return jsonify({"error": "La trivia de hoy no se puede reiniciar. Vuelve mañana."}), 400
+
+    iniciar_nueva_trivia("practica")
     return jsonify({"ok": True})
+
+# ================================================================
+#  JUEGO: ADIVINA EL ESCUDO
+#
+#  El backend elige un equipo secreto. El usuario tiene 5 intentos.
+#  Cada fallo revela una pista nueva (país, liga, inicial, emoji).
+#  NOTA: usamos emojis como placeholder temporal de los escudos
+#  reales, hasta que Daniel/Juan consigan las imágenes.
+# ================================================================
+
+ESCUDOS = {
+    "Inter Miami": {"emoji": "🌴", "pais": "Estados Unidos", "liga": "MLS"},
+    "Al Nassr": {"emoji": "🌙", "pais": "Arabia Saudita", "liga": "Saudi Pro League"},
+    "Real Madrid": {"emoji": "👑", "pais": "España", "liga": "La Liga"},
+    "Manchester City": {"emoji": "🩵", "pais": "Inglaterra", "liga": "Premier League"},
+    "Barcelona": {"emoji": "🔵", "pais": "España", "liga": "La Liga"},
+}
+
+MAX_INTENTOS_ESCUDO = 5
+
+
+def iniciar_partida_escudo(modo):
+    generador = obtener_generador(modo, "escudo")
+    equipo_secreto = generador.choice(list(ESCUDOS.keys()))
+
+    session[f"escudo_{modo}_secreto"] = equipo_secreto
+    session[f"escudo_{modo}_intentos"] = 0
+    session[f"escudo_{modo}_terminado"] = False
+
+    if modo == "diario":
+        session["escudo_diario_fecha"] = datetime.date.today().isoformat()
+
+
+def necesita_escudo_nuevo(modo):
+    clave = f"escudo_{modo}_secreto"
+    if clave not in session:
+        return True
+    if modo == "diario":
+        if session.get("escudo_diario_fecha") != datetime.date.today().isoformat():
+            return True
+    return False
+
+
+def obtener_pista(equipo_secreto, intentos_usados):
+    """
+    Va revelando pistas progresivamente según cuántos intentos
+    fallidos lleva el usuario. Con 0 intentos, no hay pistas.
+    """
+    info = ESCUDOS[equipo_secreto]
+    pistas = {"nivel_revelado": intentos_usados}
+
+    if intentos_usados >= 1:
+        pistas["pais"] = info["pais"]
+    if intentos_usados >= 2:
+        pistas["liga"] = info["liga"]
+    if intentos_usados >= 3:
+        pistas["inicial"] = equipo_secreto[0]
+    if intentos_usados >= 4:
+        pistas["emoji"] = info["emoji"]
+
+    return pistas
+
+
+@app.route("/escudo")
+def escudo_page():
+    modo = request.args.get("modo", "practica")
+    if modo not in ("diario", "practica"):
+        modo = "practica"
+    if necesita_escudo_nuevo(modo):
+        iniciar_partida_escudo(modo)
+    return render_template("escudo.html")
+
+
+@app.route("/api/escudo")
+def escudo_info():
+    modo = request.args.get("modo", "practica")
+    if modo not in ("diario", "practica"):
+        modo = "practica"
+
+    clave_secreto = f"escudo_{modo}_secreto"
+    if clave_secreto not in session:
+        return jsonify({"error": "No hay partida activa"}), 400
+
+    intentos = session[f"escudo_{modo}_intentos"]
+    terminado = session[f"escudo_{modo}_terminado"]
+
+    return jsonify({
+        "modo": modo,
+        "intentos": intentos,
+        "intentos_max": MAX_INTENTOS_ESCUDO,
+        "terminado": terminado,
+        **obtener_pista(session[clave_secreto], intentos),
+    })
+
+
+@app.route("/api/escudo/intentar", methods=["POST"])
+def escudo_intentar():
+    data = obtener_json_seguro()
+    modo = data.get("modo", "practica")
+    if modo not in ("diario", "practica"):
+        modo = "practica"
+
+    clave_secreto = f"escudo_{modo}_secreto"
+    clave_intentos = f"escudo_{modo}_intentos"
+    clave_terminado = f"escudo_{modo}_terminado"
+
+    if clave_secreto not in session:
+        return jsonify({"error": "No hay partida activa"}), 400
+    if session[clave_terminado]:
+        return jsonify({"error": "El juego ya terminó"}), 400
+
+    equipo_intento = limpiar_texto(data.get("equipo", ""))
+    if not equipo_intento:
+        return jsonify({"error": "Equipo requerido"}), 400
+
+    secreto = session[clave_secreto]
+    gano = equipo_intento.lower() == secreto.lower()
+
+    session[clave_intentos] += 1
+    if gano or session[clave_intentos] >= MAX_INTENTOS_ESCUDO:
+        session[clave_terminado] = True
+
+    return jsonify({
+        "modo": modo,
+        "gano": gano,
+        "intentos": session[clave_intentos],
+        "terminado": session[clave_terminado],
+        "equipo_secreto": secreto if session[clave_terminado] else None,
+        **obtener_pista(secreto, session[clave_intentos]),
+    })
+
+
+@app.route("/api/escudo/reiniciar", methods=["POST"])
+def escudo_reiniciar():
+    data = obtener_json_seguro()
+    modo = data.get("modo", "practica")
+
+    if modo == "diario":
+        return jsonify({"error": "El escudo de hoy no se puede reiniciar. Vuelve mañana."}), 400
+
+    iniciar_partida_escudo("practica")
+    return jsonify({"ok": True})
+
+
 
 
 # ================================================================
