@@ -476,6 +476,151 @@ def conexiones_reiniciar():
     return jsonify({"ok": True})
 
 # ================================================================
+#  JUEGO: TRIVIA RÁPIDA
+#
+#  5 preguntas de opción múltiple por partida, elegidas al azar
+#  de un banco de preguntas. El usuario nunca ve la respuesta
+#  correcta hasta que contesta.
+# ================================================================
+
+PREGUNTAS_TRIVIA = [
+    {
+        "pregunta": "¿Qué selección ganó el Mundial de 2022 en Qatar?",
+        "opciones": ["Francia", "Argentina", "Brasil", "Croacia"],
+        "correcta": 1,
+    },
+    {
+        "pregunta": "¿Quién es el máximo goleador histórico de la Champions League?",
+        "opciones": ["Lionel Messi", "Cristiano Ronaldo", "Robert Lewandowski", "Karim Benzema"],
+        "correcta": 1,
+    },
+    {
+        "pregunta": "¿Cuántos goles necesita un jugador para anotar un 'hat-trick'?",
+        "opciones": ["2", "3", "4", "5"],
+        "correcta": 1,
+    },
+    {
+        "pregunta": "¿Qué equipo tiene más títulos de Liga MX?",
+        "opciones": ["Chivas", "América", "Cruz Azul", "Toluca"],
+        "correcta": 1,
+    },
+    {
+        "pregunta": "¿En qué país se jugó el Mundial de 1978, ganado por la selección local?",
+        "opciones": ["Brasil", "Uruguay", "Argentina", "México"],
+        "correcta": 2,
+    },
+    {
+        "pregunta": "¿Cuál es el club con más títulos de Copa Libertadores?",
+        "opciones": ["Boca Juniors", "River Plate", "Independiente", "Peñarol"],
+        "correcta": 2,
+    },
+    {
+        "pregunta": "¿Cuántos jugadores de campo (sin contar al portero) tiene un equipo en la cancha?",
+        "opciones": ["9", "10", "11", "12"],
+        "correcta": 1,
+    },
+]
+
+PREGUNTAS_POR_PARTIDA = 5
+
+
+def iniciar_nueva_trivia():
+    """Elige 5 preguntas al azar del banco completo, sin repetir."""
+    indices = list(range(len(PREGUNTAS_TRIVIA)))
+    random.shuffle(indices)
+    session["trivia_preguntas"] = indices[:PREGUNTAS_POR_PARTIDA]
+    session["trivia_actual"] = 0
+    session["trivia_aciertos"] = 0
+
+
+def pregunta_publica(indice_pregunta):
+    """
+    Devuelve la pregunta y sus opciones SIN el campo "correcta".
+    Así el navegador nunca puede ver la respuesta antes de contestar.
+    """
+    p = PREGUNTAS_TRIVIA[indice_pregunta]
+    return {"pregunta": p["pregunta"], "opciones": p["opciones"]}
+
+
+@app.route("/trivia")
+def trivia_page():
+    if "trivia_preguntas" not in session:
+        iniciar_nueva_trivia()
+    return render_template("trivia.html")
+
+
+@app.route("/api/trivia")
+def trivia_info():
+    """Devuelve la pregunta actual del usuario, o el resultado final si ya terminó."""
+    if "trivia_preguntas" not in session:
+        return jsonify({"error": "No hay partida activa"}), 400
+
+    actual = session["trivia_actual"]
+    total = len(session["trivia_preguntas"])
+
+    if actual >= total:
+        return jsonify({
+            "terminado": True,
+            "aciertos": session["trivia_aciertos"],
+            "total": total,
+        })
+
+    indice_real = session["trivia_preguntas"][actual]
+    return jsonify({
+        "terminado": False,
+        "numero_pregunta": actual + 1,
+        "total_preguntas": total,
+        "aciertos": session["trivia_aciertos"],
+        **pregunta_publica(indice_real),
+    })
+
+
+@app.route("/api/trivia/responder", methods=["POST"])
+def trivia_responder():
+    """
+    Recibe el índice de la opción que eligió el usuario (0, 1, 2 o 3),
+    la compara contra la respuesta correcta, y avanza a la siguiente pregunta.
+    """
+    if "trivia_preguntas" not in session:
+        return jsonify({"error": "No hay partida activa"}), 400
+
+    actual = session["trivia_actual"]
+    total = len(session["trivia_preguntas"])
+
+    if actual >= total:
+        return jsonify({"error": "El juego ya terminó"}), 400
+
+    data = request.get_json()
+    opcion_elegida = data.get("opcion")
+
+    if opcion_elegida is None:
+        return jsonify({"error": "Falta la opción elegida"}), 400
+
+    indice_real = session["trivia_preguntas"][actual]
+    pregunta = PREGUNTAS_TRIVIA[indice_real]
+    correcto = (opcion_elegida == pregunta["correcta"])
+
+    if correcto:
+        session["trivia_aciertos"] += 1
+
+    session["trivia_actual"] += 1
+    terminado = session["trivia_actual"] >= total
+
+    return jsonify({
+        "correcto": correcto,
+        "respuesta_correcta": pregunta["correcta"],
+        "aciertos": session["trivia_aciertos"],
+        "terminado": terminado,
+    })
+
+
+@app.route("/api/trivia/reiniciar", methods=["POST"])
+def trivia_reiniciar():
+    iniciar_nueva_trivia()
+    return jsonify({"ok": True})
+
+
+# ================================================================
 #  PUNTO DE ENTRADA
 # ================================================================
 if __name__ == "__main__":
