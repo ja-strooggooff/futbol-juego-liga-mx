@@ -35,6 +35,8 @@ JUGADORES = [
     {"nombre": "Jude Bellingham", "posicion": "Mediocampista", "liga": "La Liga", "equipo": "Real Madrid", "pais": "Inglaterra", "edad": 21, "dorsal": 5},
 ]
 
+ATRIBUTOS_PISTA = ["posicion", "liga", "equipo", "pais", "edad", "dorsal"]
+
 # ================================================================
 #  VALIDACIÓN DE ENTRADAS (INPUTS)
 #
@@ -99,6 +101,7 @@ def iniciar_partida_wordle(modo):
     session[f"wordle_{modo}_secreto"] = jugador_secreto["nombre"]
     session[f"wordle_{modo}_intentos"] = 0
     session[f"wordle_{modo}_terminado"] = False
+    session[f"wordle_{modo}_pistas_usadas"] = []
 
     if modo == "diario":
         session["wordle_diario_fecha"] = datetime.date.today().isoformat()
@@ -220,6 +223,49 @@ def intentar():
         "terminado": session[clave_terminado],
         "secreto": secreto["nombre"] if session[clave_terminado] else None,
     })
+
+@app.route("/api/wordle/pista", methods=["POST"])
+def wordle_pista():
+    """
+    El usuario puede pedir una pista opcional. Cuesta 1 intento
+    real (de los 8 totales) y revela un atributo al azar del
+    jugador secreto que aún no se le había mostrado.
+    """
+    data = obtener_json_seguro()
+    modo = data.get("modo", "practica")
+    if modo not in ("diario", "practica"):
+        modo = "practica"
+
+    clave_secreto = f"wordle_{modo}_secreto"
+    clave_intentos = f"wordle_{modo}_intentos"
+    clave_terminado = f"wordle_{modo}_terminado"
+    clave_pistas = f"wordle_{modo}_pistas_usadas"
+
+    if clave_secreto not in session:
+        return jsonify({"error": "No hay partida activa"}), 400
+    if session.get(clave_terminado):
+        return jsonify({"error": "El juego ya terminó"}), 400
+    if session[clave_intentos] >= 7:
+        return jsonify({"error": "Te quedan muy pocos intentos para pedir más pistas"}), 400
+
+    secreto = next(j for j in JUGADORES if j["nombre"] == session[clave_secreto])
+    disponibles = [a for a in ATRIBUTOS_PISTA if a not in session[clave_pistas]]
+
+    if not disponibles:
+        return jsonify({"error": "Ya usaste todas las pistas disponibles"}), 400
+
+    atributo_elegido = random.choice(disponibles)
+    session[clave_pistas] = session[clave_pistas] + [atributo_elegido]
+    session[clave_intentos] += 1
+
+    return jsonify({
+        "modo": modo,
+        "atributo": atributo_elegido,
+        "valor": secreto[atributo_elegido],
+        "intentos_usados": session[clave_intentos],
+    })
+
+
 
 
 
@@ -416,6 +462,41 @@ def grid_reiniciar():
     iniciar_nuevo_grid("practica")
     return jsonify({"ok": True})
 
+@app.route("/api/grid/pista", methods=["POST"])
+def grid_pista():
+    data = obtener_json_seguro()
+    modo = data.get("modo", "practica")
+    if modo not in ("diario", "practica"):
+        modo = "practica"
+
+    clave = f"grid_{modo}"
+    if clave not in session or session[clave] is None:
+        return jsonify({"error": "No hay grid activo"}), 400
+
+    fila = data.get("fila")
+    columna = data.get("columna")
+    if not es_entero_en_rango(fila, 0, 2) or not es_entero_en_rango(columna, 0, 2):
+        return jsonify({"error": "Fila y columna deben ser números entre 0 y 2"}), 400
+
+    celda_key = f"{fila}-{columna}"
+    if session[f"grid_{modo}_resueltas"].get(celda_key):
+        return jsonify({"error": "Esta celda ya está resuelta"}), 400
+
+    cat_fila = session[clave]["filas"][fila]
+    cat_col = session[clave]["columnas"][columna]
+    usados = [n.lower() for n in session[f"grid_{modo}_usados"]]
+
+    candidatos = [
+        j["nombre"] for j in JUGADORES
+        if jugador_cumple(j, cat_fila["tipo"], cat_fila["valor"])
+        and jugador_cumple(j, cat_col["tipo"], cat_col["valor"])
+        and j["nombre"].lower() not in usados
+    ]
+
+    if not candidatos:
+        return jsonify({"error": "No hay jugadores disponibles para esta pista"}), 400
+
+    return jsonify({"modo": modo, "jugador_sugerido": random.choice(candidatos)})
 # ================================================================
 #  JUEGO: CONEXIONES
 #
@@ -583,6 +664,36 @@ def conexiones_reiniciar():
 
     iniciar_nuevas_conexiones("practica")
     return jsonify({"ok": True})
+
+
+@app.route("/api/conexiones/pista", methods=["POST"])
+def conexiones_pista():
+    data = obtener_json_seguro()
+    modo = data.get("modo", "practica")
+    if modo not in ("diario", "practica"):
+        modo = "practica"
+
+    clave = f"conexiones_{modo}"
+    if clave not in session or session[clave] is None:
+        return jsonify({"error": "No hay partida activa"}), 400
+
+    juego = session[clave]
+    resueltos = session[f"conexiones_{modo}_resueltos"]
+
+    grupos_pendientes = [v for v in juego["grupos"] if v not in resueltos]
+    if not grupos_pendientes:
+        return jsonify({"error": "Ya no hay grupos pendientes"}), 400
+
+    grupo_elegido = random.choice(grupos_pendientes)
+    jugador_pista = random.choice(juego["grupos"][grupo_elegido])
+
+    session[f"conexiones_{modo}_errores"] += 1
+
+    return jsonify({
+        "modo": modo,
+        "jugador_pista": jugador_pista,
+        "errores": session[f"conexiones_{modo}_errores"],
+    })
 
 # ================================================================
 #  JUEGO: TRIVIA RÁPIDA
@@ -769,6 +880,37 @@ def trivia_reiniciar():
     iniciar_nueva_trivia("practica")
     return jsonify({"ok": True})
 
+@app.route("/api/trivia/pista", methods=["POST"])
+def trivia_pista():
+    """
+    Elimina 2 opciones incorrectas de la pregunta actual.
+    No se puede usar más de una vez por pregunta.
+    """
+    data = obtener_json_seguro()
+    modo = data.get("modo", "practica")
+    if modo not in ("diario", "practica"):
+        modo = "practica"
+
+    clave_preguntas = f"trivia_{modo}_preguntas"
+    if clave_preguntas not in session:
+        return jsonify({"error": "No hay partida activa"}), 400
+
+    actual = session[f"trivia_{modo}_actual"]
+    total = len(session[clave_preguntas])
+    if actual >= total:
+        return jsonify({"error": "El juego ya terminó"}), 400
+
+    indice_real = session[clave_preguntas][actual]
+    pregunta = PREGUNTAS_TRIVIA[indice_real]
+    correcta = pregunta["correcta"]
+
+    # Elegimos 2 opciones incorrectas al azar para "tachar"
+    incorrectas = [i for i in range(4) if i != correcta]
+    random.shuffle(incorrectas)
+    eliminar = incorrectas[:2]
+
+    return jsonify({"modo": modo, "opciones_eliminadas": eliminar})
+
 # ================================================================
 #  JUEGO: ADIVINA EL ESCUDO
 #
@@ -910,6 +1052,39 @@ def escudo_reiniciar():
 
     iniciar_partida_escudo("practica")
     return jsonify({"ok": True})
+
+@app.route("/api/escudo/pista", methods=["POST"])
+def escudo_pista():
+    """
+    Pedir una pista cuesta 1 intento (igual que fallar un guess),
+    pero no necesitas escribir un equipo incorrecto para conseguirla.
+    """
+    data = obtener_json_seguro()
+    modo = data.get("modo", "practica")
+    if modo not in ("diario", "practica"):
+        modo = "practica"
+
+    clave_secreto = f"escudo_{modo}_secreto"
+    clave_intentos = f"escudo_{modo}_intentos"
+    clave_terminado = f"escudo_{modo}_terminado"
+
+    if clave_secreto not in session:
+        return jsonify({"error": "No hay partida activa"}), 400
+    if session[clave_terminado]:
+        return jsonify({"error": "El juego ya terminó"}), 400
+    if session[clave_intentos] >= MAX_INTENTOS_ESCUDO - 1:
+        return jsonify({"error": "Te quedan muy pocos intentos para pedir más pistas"}), 400
+
+    session[clave_intentos] += 1
+    if session[clave_intentos] >= MAX_INTENTOS_ESCUDO:
+        session[clave_terminado] = True
+
+    return jsonify({
+        "modo": modo,
+        "intentos": session[clave_intentos],
+        "terminado": session[clave_terminado],
+        **obtener_pista(session[clave_secreto], session[clave_intentos]),
+    })
 
 
 
