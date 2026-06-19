@@ -324,7 +324,156 @@ def grid_reiniciar():
     iniciar_nuevo_grid()
     return jsonify({"ok": True})
 
+# ================================================================
+#  JUEGO: CONEXIONES
+#
+#  Se muestran 8 jugadores mezclados. El usuario tiene que
+#  encontrar grupos de jugadores que comparten algo (posición,
+#  equipo, país, etc). Tiene 4 errores máximo antes de perder.
+# ================================================================
 
+MAX_ERRORES_CONEXIONES = 4
+
+
+def generar_conexiones():
+    """
+    Elige un atributo (posición, liga, equipo o país) y agrupa
+    a los jugadores según ese atributo. Solo es válido si hay
+    al menos 2 grupos con 2+ jugadores cada uno.
+    """
+    tipos = ["posicion", "liga", "equipo", "pais"]
+    random.shuffle(tipos)
+
+    for tipo in tipos:
+        grupos = {}
+        for jugador in JUGADORES:
+            valor = jugador[tipo]
+            grupos.setdefault(valor, []).append(jugador["nombre"])
+
+        # Descartamos grupos de un solo jugador (no sirven para "conectar")
+        grupos_validos = {k: v for k, v in grupos.items() if len(v) >= 2}
+
+        if len(grupos_validos) >= 2:
+            return {"tipo": tipo, "grupos": grupos_validos}
+
+    return None
+
+
+def iniciar_nuevas_conexiones():
+    """Genera una partida nueva: arma el tablero y resetea el progreso."""
+    resultado = generar_conexiones()
+    if resultado is None:
+        session["conexiones"] = None
+        return
+
+    grupos = resultado["grupos"]
+    tablero = []
+    for nombres in grupos.values():
+        tablero.extend(nombres)
+    random.shuffle(tablero)  # Mezclamos para que no se note el orden de los grupos
+
+    session["conexiones"] = {
+        "tipo": resultado["tipo"],
+        "grupos": grupos,
+        "tablero": tablero,
+    }
+    session["conexiones_resueltos"] = []  # categorías ya encontradas
+    session["conexiones_errores"] = 0
+
+
+@app.route("/conexiones")
+def conexiones_page():
+    if "conexiones" not in session or session["conexiones"] is None:
+        iniciar_nuevas_conexiones()
+    return render_template("conexiones.html")
+
+
+@app.route("/api/conexiones")
+def conexiones_info():
+    """
+    Devuelve el tablero actual (solo los jugadores que faltan por
+    agrupar) y los grupos que ya se resolvieron.
+    """
+    if "conexiones" not in session or session["conexiones"] is None:
+        return jsonify({"error": "No hay partida activa"}), 400
+
+    juego = session["conexiones"]
+    resueltos = session["conexiones_resueltos"]
+
+    jugadores_resueltos = set()
+    grupos_resueltos_info = []
+    for valor in resueltos:
+        nombres = juego["grupos"][valor]
+        jugadores_resueltos.update(nombres)
+        grupos_resueltos_info.append({"valor": valor, "jugadores": nombres})
+
+    tablero_pendiente = [n for n in juego["tablero"] if n not in jugadores_resueltos]
+
+    return jsonify({
+        "tablero": tablero_pendiente,
+        "grupos_resueltos": grupos_resueltos_info,
+        "errores": session["conexiones_errores"],
+        "errores_max": MAX_ERRORES_CONEXIONES,
+        "terminado": (
+            len(resueltos) == len(juego["grupos"])
+            or session["conexiones_errores"] >= MAX_ERRORES_CONEXIONES
+        ),
+    })
+
+
+@app.route("/api/conexiones/intentar", methods=["POST"])
+def conexiones_intentar():
+    """
+    Recibe una lista de nombres que el usuario seleccionó.
+    Si coinciden EXACTAMENTE con un grupo sin resolver, acierta.
+    Si no, cuenta como error.
+    """
+    if "conexiones" not in session or session["conexiones"] is None:
+        return jsonify({"error": "No hay partida activa"}), 400
+
+    juego = session["conexiones"]
+    resueltos = session["conexiones_resueltos"]
+
+    if session["conexiones_errores"] >= MAX_ERRORES_CONEXIONES or len(resueltos) == len(juego["grupos"]):
+        return jsonify({"error": "El juego ya terminó"}), 400
+
+    data = request.get_json()
+    seleccion = data.get("jugadores", [])
+    seleccion_normalizada = set(n.strip().lower() for n in seleccion)
+
+    grupo_encontrado = None
+    for valor, nombres in juego["grupos"].items():
+        if valor in resueltos:
+            continue
+        if seleccion_normalizada == set(n.lower() for n in nombres):
+            grupo_encontrado = valor
+            break
+
+    if grupo_encontrado:
+        session["conexiones_resueltos"] = resueltos + [grupo_encontrado]
+        session.modified = True
+        correcto = True
+    else:
+        session["conexiones_errores"] += 1
+        correcto = False
+
+    terminado = (
+        len(session["conexiones_resueltos"]) == len(juego["grupos"])
+        or session["conexiones_errores"] >= MAX_ERRORES_CONEXIONES
+    )
+
+    return jsonify({
+        "correcto": correcto,
+        "categoria_encontrada": grupo_encontrado,
+        "errores": session["conexiones_errores"],
+        "terminado": terminado,
+    })
+
+
+@app.route("/api/conexiones/reiniciar", methods=["POST"])
+def conexiones_reiniciar():
+    iniciar_nuevas_conexiones()
+    return jsonify({"ok": True})
 
 # ================================================================
 #  PUNTO DE ENTRADA
