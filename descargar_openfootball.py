@@ -3,6 +3,7 @@ import time
 import sqlite3
 import datetime
 import requests
+from collections import Counter
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -43,55 +44,64 @@ def descargar_json(nombre_repo, ruta_archivo):
 
 def extraer_marcador(score_raw):
     """
-    El campo 'score' viene en distintos formatos según el archivo
-    (son datasets armados por mucha gente distinta a lo largo de años):
-    - {"ft": [2, 0]}   <- el más común
-    - [2, 0]           <- formato alterno, algunos archivos viejos
-    Si no podemos entenderlo, devolvemos None y ese partido se salta.
+    Intenta leer el marcador en TODOS los formatos que hemos visto:
+    - {"ft": [2, 0]}                          formato normal
+    - [2, 0]                                  formato alterno (lista directa)
+    - {"ft": {"home": 2, "away": 0}}          formato con diccionario anidado (algunos archivos viejos)
     """
     if isinstance(score_raw, dict):
         ft = score_raw.get("ft")
         if isinstance(ft, list) and len(ft) == 2:
             return ft[0], ft[1]
+        if isinstance(ft, dict) and "home" in ft and "away" in ft:
+            return ft["home"], ft["away"]
         return None
     if isinstance(score_raw, list) and len(score_raw) == 2:
         return score_raw[0], score_raw[1]
     return None
 
 
-def guardar_en_db(conexion, nombre_torneo, datos_json):
-    """
-    Guarda los partidos de un archivo. Si algún partido individual
-    viene en un formato raro o incompleto, lo SALTA sin tronar
-    el script completo (try/except por partido).
-    """
+def diagnosticar_partido(partido):
+    """Devuelve por qué un partido NO se pudo guardar, o 'ok' si está bien."""
+    if not isinstance(partido, dict):
+        return "no_es_diccionario"
+    score = partido.get("score")
+    if score is None:
+        return "sin_score_partido_futuro"
+    marcador = extraer_marcador(score)
+    if marcador is None:
+        return "formato_score_desconocido"
+    if not partido.get("team1") or not partido.get("team2"):
+        return "faltan_nombres_equipo"
+    return "ok"
+
+
+def guardar_en_db(conexion, nombre_torneo, datos_json, contador_motivos, ejemplos_formato_raro):
     if not datos_json or not isinstance(datos_json, dict) or "matches" not in datos_json:
-        return 0, 0, 0
+        return 0, 0
 
     cursor = conexion.cursor()
     nuevos = 0
     ya_existian = 0
-    saltados = 0
 
     for partido in datos_json["matches"]:
         try:
-            if not isinstance(partido, dict):
-                saltados += 1
+            motivo = diagnosticar_partido(partido)
+            if motivo != "ok":
+                contador_motivos[motivo] += 1
+                if motivo == "formato_score_desconocido" and len(ejemplos_formato_raro) < 5:
+                    ejemplos_formato_raro.append({
+                        "torneo": nombre_torneo,
+                        "score_raw": partido.get("score"),
+                        "team1": partido.get("team1"),
+                        "team2": partido.get("team2"),
+                    })
                 continue
 
-            marcador = extraer_marcador(partido.get("score"))
-            if marcador is None:
-                saltados += 1
-                continue
-            goles1, goles2 = marcador
-
+            goles1, goles2 = extraer_marcador(partido.get("score"))
             equipo1 = partido.get("team1")
             equipo2 = partido.get("team2")
             fecha = partido.get("date")
-
-            if not equipo1 or not equipo2:
-                saltados += 1
-                continue
 
             cursor.execute("""
                 INSERT OR IGNORE INTO partidos
@@ -126,13 +136,11 @@ def guardar_en_db(conexion, nombre_torneo, datos_json):
                 """, (partido_id, gol.get("name"), str(gol.get("minute"))))
 
         except Exception:
-            # Cualquier cosa rara que no anticipamos: saltamos ESE
-            # partido nada más, el script sigue con el siguiente.
-            saltados += 1
+            contador_motivos["error_inesperado"] += 1
             continue
 
     conexion.commit()
-    return nuevos, ya_existian, saltados
+    return nuevos, ya_existian
 
 
 def main():
@@ -148,7 +156,9 @@ def main():
 
     total_nuevos = 0
     total_existian = 0
-    total_saltados = 0
+    contador_motivos = Counter()
+    ejemplos_formato_raro = []
+
 
     for repo in repos:
         print(f"\nRevisando repo: {repo}")
@@ -163,10 +173,9 @@ def main():
         for archivo in archivos:
             try:
                 datos = descargar_json(repo, archivo)
-                nuevos, existian, saltados = guardar_en_db(conexion, f"{repo}/{archivo}", datos)
+                nuevos, existian = guardar_en_db(conexion, f"{repo}/{archivo}", datos, contador_motivos, ejemplos_formato_raro)
                 total_nuevos += nuevos
                 total_existian += existian
-                total_saltados += saltados
             except Exception as e:
                 print(f"  Error con {archivo}, lo saltamos: {e}")
             time.sleep(0.1)
@@ -180,9 +189,14 @@ def main():
 
     print(f"\n¡Listo!")
     print(f"Partidos nuevos agregados: {total_nuevos}")
-    print(f"Partidos que ya existían (saltados, no duplicados): {total_existian}")
-    print(f"Partidos saltados por formato raro/incompleto: {total_saltados}")
-    print(f"Última actualización guardada: {ahora}")
+    print(f"Partidos que ya existían (no duplicados): {total_existian}")
+    print(f"\nDesglose de partidos saltados (por qué):")
+    for motivo, cantidad in contador_motivos.most_common():
+        print(f"  {motivo}: {cantidad}")
+    print(f"\nÚltima actualización guardada: {ahora}")
+    print(f"\nEjemplos reales de 'formato_score_desconocido':")
+    for ej in ejemplos_formato_raro:
+        print(f"  {ej['team1']} vs {ej['team2']} ({ej['torneo']}): score = {ej['score_raw']}")
 
 
 if __name__ == "__main__":
