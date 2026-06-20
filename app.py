@@ -5,7 +5,7 @@
 #  El navegador NUNCA sabe quién es el jugador secreto hasta
 #  que el juego termina. Eso lo decide y lo guarda Python.
 # ================================================================
-
+import sqlite3
 import random
 import datetime
 from flask import Flask, render_template, jsonify, request, session
@@ -799,12 +799,93 @@ PREGUNTAS_TRIVIA = [
 PREGUNTAS_POR_PARTIDA = 5
 
 
-def iniciar_nueva_trivia(modo):
-    generador = obtener_generador(modo, "trivia")
-    indices = list(range(len(PREGUNTAS_TRIVIA)))
-    generador.shuffle(indices)
+def cargar_ids_partidos():
+    """
+    Carga UNA SOLA VEZ (al arrancar el servidor) la lista de IDs de
+    partidos históricos disponibles. Así no consultamos la base de
+    datos completa cada vez que alguien empieza una partida de trivia.
+    Si el archivo futtrivia.db no existe (alguien clonó el repo y no
+    corrió el script de descarga todavía), el juego sigue funcionando
+    con las preguntas fijas, sin tronar.
+    """
+    try:
+        conexion = sqlite3.connect("futtrivia.db")
+        cursor = conexion.cursor()
+        cursor.execute("SELECT id FROM partidos")
+        ids = [fila[0] for fila in cursor.fetchall()]
+        conexion.close()
+        return ids
+    except Exception:
+        return []
 
-    session[f"trivia_{modo}_preguntas"] = indices[:PREGUNTAS_POR_PARTIDA]
+
+IDS_PARTIDOS = cargar_ids_partidos()
+
+
+def generar_pregunta_desde_partido(cursor, partido_id):
+    """Convierte un partido real de la base de datos en una pregunta de opción múltiple."""
+    cursor.execute(
+        "SELECT equipo1, equipo2, goles1, goles2 FROM partidos WHERE id = ?",
+        (partido_id,)
+    )
+    fila = cursor.fetchone()
+    if fila is None:
+        return None
+
+    equipo1, equipo2, goles1, goles2 = fila
+
+    if goles1 > goles2:
+        ganador = equipo1
+    elif goles2 > goles1:
+        ganador = equipo2
+    else:
+        ganador = "Empate"
+
+    opciones = [equipo1, equipo2, "Empate"]
+    return {
+        "pregunta": f"¿Quién ganó el partido {equipo1} vs {equipo2}?",
+        "opciones": opciones,
+        "correcta": opciones.index(ganador),
+    }
+
+
+def generar_pool_preguntas(generador, cantidad=10):
+    """
+    Arma un conjunto mixto de preguntas: las generales (tu banco fijo
+    de 7) más varias generadas al azar desde los 90,000+ partidos reales.
+    """
+    pool = [
+        {"pregunta": p["pregunta"], "opciones": p["opciones"], "correcta": p["correcta"]}
+        for p in PREGUNTAS_TRIVIA
+    ]
+
+    if IDS_PARTIDOS:
+        conexion = sqlite3.connect("futtrivia.db")
+        cursor = conexion.cursor()
+        elegidos = generador.sample(IDS_PARTIDOS, min(cantidad, len(IDS_PARTIDOS)))
+        for partido_id in elegidos:
+            pregunta = generar_pregunta_desde_partido(cursor, partido_id)
+            if pregunta:
+                pool.append(pregunta)
+        conexion.close()
+
+    return pool
+
+
+def iniciar_nueva_trivia(modo):
+    """
+    Ahora arma un pool mixto (preguntas fijas + preguntas reales de
+    partidos históricos), lo mezcla, y elige las primeras 5.
+    Importante: guardamos las preguntas COMPLETAS en la sesión (con
+    todo y la respuesta correcta) porque ya no usamos índices de una
+    lista fija — las generamos al vuelo. La respuesta correcta nunca
+    se manda al navegador hasta que el usuario contesta.
+    """
+    generador = obtener_generador(modo, "trivia")
+    pool = generar_pool_preguntas(generador, cantidad=10)
+    generador.shuffle(pool)
+
+    session[f"trivia_{modo}_preguntas"] = pool[:PREGUNTAS_POR_PARTIDA]
     session[f"trivia_{modo}_actual"] = 0
     session[f"trivia_{modo}_aciertos"] = 0
 
@@ -822,13 +903,9 @@ def necesita_trivia_nueva(modo):
     return False
 
 
-def pregunta_publica(indice_pregunta):
-    """
-    Devuelve la pregunta y sus opciones SIN el campo "correcta".
-    Así el navegador nunca puede ver la respuesta antes de contestar.
-    """
-    p = PREGUNTAS_TRIVIA[indice_pregunta]
-    return {"pregunta": p["pregunta"], "opciones": p["opciones"]}
+def pregunta_publica(pregunta_completa):
+    """Quita el campo 'correcta' antes de mandarla al navegador."""
+    return {"pregunta": pregunta_completa["pregunta"], "opciones": pregunta_completa["opciones"]}
 
 
 @app.route("/trivia")
@@ -852,33 +929,20 @@ def trivia_info():
         return jsonify({"error": "No hay partida activa"}), 400
 
     actual = session[f"trivia_{modo}_actual"]
-    total = len(session[clave_preguntas])
+    preguntas = session[clave_preguntas]
+    total = len(preguntas)
 
     if actual >= total:
         return jsonify({
-            "modo": modo,
-            "terminado": True,
-            "aciertos": session[f"trivia_{modo}_aciertos"],
-            "total": total,
+            "modo": modo, "terminado": True,
+            "aciertos": session[f"trivia_{modo}_aciertos"], "total": total,
         })
 
-    indice_real = session[clave_preguntas][actual]
+    pregunta_actual = preguntas[actual]
     return jsonify({
-        "modo": modo,
-        "terminado": False,
-        "numero_pregunta": actual + 1,
-        "total_preguntas": total,
-        "aciertos": session[f"trivia_{modo}_aciertos"],
-        **pregunta_publica(indice_real),
-    })
-
-    indice_real = session["trivia_preguntas"][actual]
-    return jsonify({
-        "terminado": False,
-        "numero_pregunta": actual + 1,
-        "total_preguntas": total,
-        "aciertos": session["trivia_aciertos"],
-        **pregunta_publica(indice_real),
+        "modo": modo, "terminado": False, "numero_pregunta": actual + 1,
+        "total_preguntas": total, "aciertos": session[f"trivia_{modo}_aciertos"],
+        **pregunta_publica(pregunta_actual),
     })
 
 
@@ -895,8 +959,9 @@ def trivia_responder():
 
     clave_actual = f"trivia_{modo}_actual"
     clave_aciertos = f"trivia_{modo}_aciertos"
+    preguntas = session[clave_preguntas]
     actual = session[clave_actual]
-    total = len(session[clave_preguntas])
+    total = len(preguntas)
 
     if actual >= total:
         return jsonify({"error": "El juego ya terminó"}), 400
@@ -905,29 +970,22 @@ def trivia_responder():
     if not es_entero_en_rango(opcion_elegida, 0, 3):
         return jsonify({"error": "La opción debe ser un número entre 0 y 3"}), 400
 
-    indice_real = session[clave_preguntas][actual]
-    pregunta = PREGUNTAS_TRIVIA[indice_real]
-    correcto = (opcion_elegida == pregunta["correcta"])
+    pregunta = preguntas[actual]
+    correcto = opcion_elegida == pregunta["correcta"]
 
     if correcto:
         session[clave_aciertos] += 1
-
     session[clave_actual] += 1
     terminado = session[clave_actual] >= total
 
     if terminado:
-        registrar_resultado("trivia", modo, "completado", {
-            "aciertos": session[clave_aciertos],
-            "total": total,
-        })
+        registrar_resultado("trivia", modo, "completado", {"aciertos": session[clave_aciertos], "total": total})
 
     return jsonify({
-        "modo": modo,
-        "correcto": correcto,
-        "respuesta_correcta": pregunta["correcta"],
-        "aciertos": session[clave_aciertos],
-        "terminado": terminado,
+        "modo": modo, "correcto": correcto, "respuesta_correcta": pregunta["correcta"],
+        "aciertos": session[clave_aciertos], "terminado": terminado,
     })
+
 
 
 @app.route("/api/trivia/reiniciar", methods=["POST"])
@@ -961,8 +1019,7 @@ def trivia_pista():
     if actual >= total:
         return jsonify({"error": "El juego ya terminó"}), 400
 
-    indice_real = session[clave_preguntas][actual]
-    pregunta = PREGUNTAS_TRIVIA[indice_real]
+    pregunta = session[clave_preguntas][actual]
     correcta = pregunta["correcta"]
 
     # Elegimos 2 opciones incorrectas al azar para "tachar"

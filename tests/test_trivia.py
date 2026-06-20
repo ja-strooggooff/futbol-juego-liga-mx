@@ -19,12 +19,15 @@ def test_pregunta_no_revela_respuesta_correcta(client):
     assert "respuesta_correcta" not in datos
 
 
-def test_pregunta_tiene_4_opciones(client):
-    """Cada pregunta debe traer exactamente 4 opciones."""
+def test_pregunta_tiene_opciones_validas(client):
+    """
+    Cada pregunta debe traer 3 opciones (preguntas de resultado real,
+    tipo 'quién ganó') o 4 opciones (preguntas generales fijas).
+    """
     client.get("/trivia?modo=practica")
     respuesta = client.get("/api/trivia?modo=practica")
     datos = respuesta.get_json()
-    assert len(datos["opciones"]) == 4
+    assert len(datos["opciones"]) in (3, 4)
 
 
 def test_responder_con_opcion_fuera_de_rango_falla(client):
