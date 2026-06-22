@@ -15,7 +15,7 @@ import requests
 PATRON_FECHA = re.compile(r'^\s{2}(\w{3}) (\w{3}) (\d{1,2})(?: (\d{4}))?\s*$')
 
 PATRON_PARTIDO = re.compile(
-    r'^\s+(?:(\d{1,2}:\d{2})\s+)?(.+?)\s+v\s+(.+?)\s+(\d+)-(\d+)(?:\s*\((\d+)-(\d+)\))?\s*$'
+    r'^\s+(?:(\d{1,2}:\d{2})\s+)?(.+?)\s+v\s+(.+?)\s+(\d+)-(\d+)(?:\s+a\.e\.t\.)?(?:\s*\([\d-]+,?\s*[\d-]+\))?\s*$'
 )
 
 
@@ -53,7 +53,7 @@ def parsear_football_txt(contenido, anio_default):
 
         m_partido = PATRON_PARTIDO.match(linea_limpia)
         if m_partido:
-            hora, equipo1, equipo2, g1, g2, h1, h2 = m_partido.groups()
+            hora, equipo1, equipo2, g1, g2 = m_partido.groups()
             partidos.append({
                 "date": fecha_actual,
                 "team1": equipo1.strip(),
