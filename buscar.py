@@ -53,17 +53,31 @@ def buscar_club(cursor, termino):
 
 
 def buscar_alineacion(cursor, termino_equipo, temporada):
-    return cursor.execute("""
-        SELECT gl.fecha, gl.player_name, gl.posicion, gl.tipo, gl.capitan
+    # Primero buscamos el club_id del equipo
+    clubs = cursor.execute("""
+        SELECT club_id, nombre FROM clubs
+        WHERE norm(nombre) LIKE norm(?)
+        LIMIT 5
+    """, (f"%{termino_equipo}%",)).fetchall()
+
+    if not clubs:
+        return [], None
+
+    # Si hay varios resultados, usamos el primero y avisamos
+    club_id, club_nombre = clubs[0]
+
+    resultados = cursor.execute("""
+        SELECT DISTINCT gl.player_name, gl.posicion, gl.capitan, gl.fecha
         FROM game_lineups gl
         JOIN games g ON gl.game_id = g.game_id
-        WHERE (norm(g.club_local_nombre) LIKE norm(?)
-            OR norm(g.club_visitante_nombre) LIKE norm(?))
+        WHERE gl.club_id = ?
         AND g.temporada = ?
         AND gl.tipo = 'starting_lineup'
         ORDER BY gl.fecha DESC
         LIMIT 30
-    """, (f"%{termino_equipo}%", f"%{termino_equipo}%", int(temporada))).fetchall()
+    """, (club_id, int(temporada))).fetchall()
+
+    return resultados, club_nombre
 
 
 def buscar_goles_jugador(cursor, termino):
@@ -140,20 +154,22 @@ def main():
         elif opcion == "4":
             equipo = input("Nombre del equipo: ").strip()
             temporada = input("Temporada (año, ej: 2023): ").strip()
-            resultados = buscar_alineacion(cursor, equipo, temporada)
+            resultados, club_nombre = buscar_alineacion(cursor, equipo, temporada)
             if not resultados:
                 print(f"  ❌ No se encontró alineación de '{equipo}' en {temporada}")
                 print(f"  💡 Recuerda que alineaciones vienen de transfermarkt — puede que el equipo no esté cubierto")
             else:
-                print(f"\n  ✅ Titulares encontrados:")
+                print(f"\n  ✅ Jugadores de {club_nombre} en {temporada}:")
                 vistos = set()
                 for r in resultados:
-                    fecha, nombre, posicion, tipo, capitan = r
+                    nombre, posicion, capitan, fecha = r
                     if nombre not in vistos:
                         cap = " (C)" if capitan else ""
                         print(f"  → {nombre} | {posicion}{cap} | {fecha}")
                         vistos.add(nombre)
 
+
+                        
         elif opcion == "5":
             termino = input("Nombre del jugador: ").strip()
             resultados = buscar_goles_jugador(cursor, termino)
