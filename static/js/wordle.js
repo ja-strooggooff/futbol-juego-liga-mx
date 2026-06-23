@@ -56,6 +56,8 @@ function mostrarFinDeJuego(data) {
     resultMsg.classList.add("perdiste");
   }
   resultMsg.classList.remove("hidden");
+
+  document.getElementById("reiniciar-btn").disabled = false;
 }
 
 async function submitGuess() {
@@ -91,6 +93,59 @@ async function submitGuess() {
   if (data.terminado) {
     mostrarFinDeJuego(data);
   }
+}
+
+async function pedirPista() {
+  if (juegoTerminado) return;
+
+  let response, data;
+  try {
+    response = await fetch("/api/wordle/pista", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ modo }),
+    });
+    data = await response.json();
+  } catch (err) {
+    mostrarError("No se pudo conectar con el servidor. Intenta de nuevo.");
+    return;
+  }
+
+  if (!response.ok) {
+    mostrarError(data.error || "Ocurrió un error inesperado.");
+    return;
+  }
+
+  resultMsg.textContent = `Pista: el ${data.atributo} es ${data.valor}`;
+  resultMsg.classList.remove("hidden", "ganaste", "perdiste");
+}
+
+async function reiniciarPartida() {
+  let response, data;
+  try {
+    response = await fetch("/api/wordle/reiniciar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ modo }),
+    });
+    data = await response.json();
+  } catch (err) {
+    mostrarError("No se pudo conectar con el servidor. Intenta de nuevo.");
+    return;
+  }
+
+  if (!response.ok) {
+    mostrarError(data.error || "Ocurrió un error inesperado.");
+    return;
+  }
+
+  // Limpiar el tablero y reiniciar el estado visual
+  board.innerHTML = '<p class="wordle-placeholder">Escribe un jugador abajo para empezar 👇</p>';
+  resultMsg.classList.add("hidden");
+  input.disabled = false;
+  input.value = "";
+  juegoTerminado = false;
+  document.getElementById("reiniciar-btn").disabled = true;
 }
 
 input.addEventListener("keydown", (e) => {
