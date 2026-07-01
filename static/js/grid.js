@@ -64,7 +64,8 @@ async function cargarGrid() {
 function seleccionarCelda(fila, columna) {
   filaSeleccionada = fila;
   columnaSeleccionada = columna;
-  seleccionLabel.textContent = `Fila ${fila}, Columna ${columna}`;
+  seleccionLabel.textContent = `Celda seleccionada: fila ${fila + 1}, columna ${columna + 1}`;
+  document.getElementById("btn-adivinar").disabled = false;
   input.focus();
 }
 
@@ -118,7 +119,8 @@ async function intentarCelda() {
     mostrarMensaje(`¡Correcto! ${data.resueltas}/9 resueltas.`);
     filaSeleccionada = null;
     columnaSeleccionada = null;
-    seleccionLabel.textContent = "Click en una celda";
+    document.getElementById("btn-adivinar").disabled = true;
+    seleccionLabel.textContent = "Selecciona una celda del tablero";
   } else {
     mostrarMensaje(`${data.nombre} no cumple con esa fila/columna.`, "perdiste");
   }
@@ -186,7 +188,8 @@ async function reiniciarPartida() {
   });
   filaSeleccionada = null;
   columnaSeleccionada = null;
-  seleccionLabel.textContent = "Click en una celda";
+  document.getElementById("btn-adivinar").disabled = true;
+  seleccionLabel.textContent = "Selecciona una celda del tablero";
   resultMsg.classList.add("hidden");
   input.value = "";
 
