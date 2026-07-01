@@ -67,7 +67,8 @@
         placeholder="Ej: Lionel Messi"
         autocomplete="off"
       />
-      <button class="btn-primary" id="celda-seleccionada-label" disabled>Click en una celda</button>
+      <p id="celda-seleccionada-label" style="color:#888;font-size:14px;margin-bottom:8px;">Selecciona una celda del tablero</p>
+      <button class="btn-primary" id="btn-adivinar" onclick="intentarCelda()" disabled>Adivinar</button>
       <button class="btn-secondary" onclick="pedirPista()">Pista</button>
       <button class="btn-secondary" id="reiniciar-btn" onclick="reiniciarPartida()">Reiniciar</button>
     </div>
