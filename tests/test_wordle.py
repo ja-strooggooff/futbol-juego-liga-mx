@@ -42,19 +42,22 @@ def test_intentar_sin_body_no_truena(client):
 def test_jugador_correcto_revela_secreto(client):
     """Si adivinas al jugador secreto exacto, 'gano' debe ser True."""
     client.get("/wordle?modo=practica")
+
     from app import JUGADORES
-    gano_alguna_vez = False
-    for jugador in JUGADORES:
-        respuesta = client.post("/api/intentar", json={"nombre": jugador["nombre"], "modo": "practica"})
-        datos = respuesta.get_json()
-        if datos.get("gano"):
-            gano_alguna_vez = True
-            assert datos["secreto"] == jugador["nombre"]
-            assert datos["terminado"] is True
-            break
-        if datos.get("terminado"):
-            break
-    assert gano_alguna_vez, "Ninguno de los jugadores de prueba coincidió con el secreto"
+
+    # Leemos el nombre del secreto directamente de la sesión activa,
+    # sin necesidad de agotar intentos ni reiniciar.
+    with client.session_transaction() as sess:
+        nombre_secreto = sess.get("wordle_practica_secreto")
+
+    assert nombre_secreto is not None, "No se encontró un secreto activo en la sesión"
+
+    respuesta = client.post("/api/intentar", json={"nombre": nombre_secreto, "modo": "practica"})
+    datos = respuesta.get_json()
+    assert datos.get("gano") is True
+    assert datos.get("terminado") is True
+
+
 
 
 def test_no_se_puede_jugar_despues_de_terminar(client):

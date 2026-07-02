@@ -2,3 +2,4 @@ flask
 pytest
 requests
 python-dotenv
+flask-session
