@@ -9,6 +9,7 @@ import sqlite3
 import random
 import datetime
 from flask import Flask, render_template, jsonify, request, session
+from flask_session import Session
 
 app = Flask(__name__)
 
@@ -18,6 +19,11 @@ app = Flask(__name__)
 # En producción esto debe venir de una variable de entorno,
 # por ahora lo dejamos fijo para desarrollo.
 app.secret_key = "cambia-esto-luego-con-env-var"
+
+app.config["SESSION_TYPE"] = "filesystem"
+app.config["SESSION_FILE_DIR"] = "./flask_sessions"
+app.config["SESSION_PERMANENT"] = False
+Session(app)
 
 
 # ================================================================
@@ -79,7 +85,7 @@ def calcular_edad(fecha_nac_str):
         return None
 
 
-def cargar_jugadores_desde_db(limite=300):
+def cargar_jugadores_desde_db(limite=50000):
     """
     Carga jugadores reales de la base de datos, filtrando solo los que
     tienen datos completos y un valor de mercado conocido.
@@ -107,7 +113,7 @@ def cargar_jugadores_desde_db(limite=300):
             AND j.posicion IS NOT NULL AND j.posicion != ''
             AND j.pais IS NOT NULL AND j.pais != ''
             AND j.club IS NOT NULL AND j.club != ''
-            AND j.valor_mercado IS NOT NULL AND j.valor_mercado > 0
+            AND j.valor_mercado IS NOT NULL AND j.valor_mercado > 100000
             ORDER BY j.valor_mercado DESC
             LIMIT ?
         """, (limite,)).fetchall()
@@ -157,7 +163,7 @@ JUGADORES_RESPALDO = [
 ]
 
 # Cargamos los jugadores al arrancar el servidor (una sola vez)
-JUGADORES = cargar_jugadores_desde_db(limite=300)
+JUGADORES = cargar_jugadores_desde_db(limite=50000)
 
 ATRIBUTOS_PISTA = ["posicion", "liga", "equipo", "pais", "edad", "valor_mercado"]
 
