@@ -53,7 +53,6 @@ def buscar_club(cursor, termino):
 
 
 def buscar_alineacion(cursor, termino_equipo, temporada):
-    # Primero buscamos el club_id del equipo
     clubs = cursor.execute("""
         SELECT club_id, nombre FROM clubs
         WHERE norm(nombre) LIKE norm(?)
@@ -63,21 +62,21 @@ def buscar_alineacion(cursor, termino_equipo, temporada):
     if not clubs:
         return [], None
 
-    # Si hay varios resultados, usamos el primero y avisamos
     club_id, club_nombre = clubs[0]
 
     resultados = cursor.execute("""
         SELECT DISTINCT gl.player_name, gl.posicion, gl.capitan, gl.fecha
         FROM game_lineups gl
-        JOIN games g ON gl.game_id = g.game_id
         WHERE gl.club_id = ?
-        AND g.temporada = ?
+        AND strftime('%Y', gl.fecha) = ?
         AND gl.tipo = 'starting_lineup'
         ORDER BY gl.fecha DESC
         LIMIT 30
-    """, (club_id, int(temporada))).fetchall()
+    """, (club_id, str(temporada))).fetchall()
 
     return resultados, club_nombre
+
+
 
 
 def buscar_goles_jugador(cursor, termino):
@@ -156,8 +155,31 @@ def main():
             temporada = input("Temporada (año, ej: 2023): ").strip()
             resultados, club_nombre = buscar_alineacion(cursor, equipo, temporada)
             if not resultados:
-                print(f"  ❌ No se encontró alineación de '{equipo}' en {temporada}")
-                print(f"  💡 Recuerda que alineaciones vienen de transfermarkt — puede que el equipo no esté cubierto")
+                # Buscamos qué temporadas sí tiene ese equipo
+                clubs = cursor.execute("""
+                    SELECT club_id, nombre FROM clubs
+                    WHERE norm(nombre) LIKE norm(?)
+                    LIMIT 1
+                """, (f"%{equipo}%",)).fetchone()
+
+                if clubs:
+                    club_id, club_nombre = clubs
+                    temporadas = cursor.execute("""
+                        SELECT DISTINCT strftime('%Y', fecha) as anio
+                        FROM game_lineups
+                        WHERE club_id = ? AND tipo = 'starting_lineup'
+                        ORDER BY anio DESC
+                    """, (club_id,)).fetchall()
+
+                    if temporadas:
+                        años = [t[0] for t in temporadas]
+                        print(f"  ❌ No hay alineación de {club_nombre} en {temporada}")
+                        print(f"  💡 Temporadas disponibles: {', '.join(años)}")
+                    else:
+                        print(f"  ❌ {club_nombre} no tiene alineaciones registradas en ninguna temporada")
+                        print(f"  💡 Las alineaciones de Liga MX solo están disponibles desde 2025")
+                else:
+                    print(f"  ❌ No se encontró el equipo '{equipo}'")
             else:
                 print(f"\n  ✅ Jugadores de {club_nombre} en {temporada}:")
                 vistos = set()
@@ -167,7 +189,7 @@ def main():
                         cap = " (C)" if capitan else ""
                         print(f"  → {nombre} | {posicion}{cap} | {fecha}")
                         vistos.add(nombre)
-
+                        
 
                         
         elif opcion == "5":

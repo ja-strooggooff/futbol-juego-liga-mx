@@ -65,18 +65,102 @@ def historial():
 #  BASE DE DATOS TEMPORAL DE JUGADORES
 #  (la migraremos a SQLite más adelante)
 # ================================================================
-JUGADORES = [
-    {"nombre": "Lionel Messi", "posicion": "Delantero", "liga": "MLS", "equipo": "Inter Miami", "pais": "Argentina", "edad": 37, "dorsal": 10},
-    {"nombre": "Cristiano Ronaldo", "posicion": "Delantero", "liga": "Saudi Pro League", "equipo": "Al Nassr", "pais": "Portugal", "edad": 39, "dorsal": 7},
-    {"nombre": "Kylian Mbappé", "posicion": "Delantero", "liga": "La Liga", "equipo": "Real Madrid", "pais": "Francia", "edad": 25, "dorsal": 9},
-    {"nombre": "Erling Haaland", "posicion": "Delantero", "liga": "Premier League", "equipo": "Manchester City", "pais": "Noruega", "edad": 23, "dorsal": 9},
-    {"nombre": "Vinícius Jr.", "posicion": "Extremo", "liga": "La Liga", "equipo": "Real Madrid", "pais": "Brasil", "edad": 23, "dorsal": 7},
-    {"nombre": "Pedri", "posicion": "Mediocampista", "liga": "La Liga", "equipo": "Barcelona", "pais": "España", "edad": 22, "dorsal": 8},
-    {"nombre": "Lamine Yamal", "posicion": "Extremo", "liga": "La Liga", "equipo": "Barcelona", "pais": "España", "edad": 17, "dorsal": 19},
-    {"nombre": "Jude Bellingham", "posicion": "Mediocampista", "liga": "La Liga", "equipo": "Real Madrid", "pais": "Inglaterra", "edad": 21, "dorsal": 5},
+def calcular_edad(fecha_nac_str):
+    """Calcula la edad actual a partir de la fecha de nacimiento."""
+    if not fecha_nac_str:
+        return None
+    try:
+        nacimiento = datetime.date.fromisoformat(fecha_nac_str.split(" ")[0])
+        hoy = datetime.date.today()
+        return hoy.year - nacimiento.year - (
+            (hoy.month, hoy.day) < (nacimiento.month, nacimiento.day)
+        )
+    except Exception:
+        return None
+
+
+def cargar_jugadores_desde_db(limite=300):
+    """
+    Carga jugadores reales de la base de datos, filtrando solo los que
+    tienen datos completos y un valor de mercado conocido.
+    El parámetro 'limite' controla cuántos jugadores se cargan al iniciar
+    el servidor — 300 es un buen balance entre variedad y rendimiento.
+    Si la base de datos no existe (alguien clonó el repo y no corrió
+    los scripts de importación), cae de vuelta a la lista de 8 hardcodeados.
+    """
+    try:
+        conexion = sqlite3.connect("futtrivia.db")
+        cursor = conexion.cursor()
+
+        filas = cursor.execute("""
+            SELECT
+                j.nombre,
+                j.posicion_especifica,
+                j.pais,
+                j.club,
+                COALESCE(c.nombre, j.liga_codigo) AS liga,
+                j.fecha_nacimiento,
+                j.valor_mercado
+            FROM jugadores_reales j
+            LEFT JOIN competitions c ON j.liga_codigo = c.competition_id
+            WHERE j.nombre IS NOT NULL AND j.nombre != ''
+            AND j.posicion IS NOT NULL AND j.posicion != ''
+            AND j.pais IS NOT NULL AND j.pais != ''
+            AND j.club IS NOT NULL AND j.club != ''
+            AND j.valor_mercado IS NOT NULL AND j.valor_mercado > 0
+            ORDER BY j.valor_mercado DESC
+            LIMIT ?
+        """, (limite,)).fetchall()
+
+        conexion.close()
+
+        jugadores = []
+        for fila in filas:
+            nombre, posicion, pais, club, liga, fecha_nac, valor = fila
+            edad = calcular_edad(fecha_nac)
+            if edad is None:
+                continue  # sin edad no podemos hacer la comparacion numerica
+
+            jugadores.append({
+                "nombre": nombre,
+                "posicion": posicion or "Desconocida",
+                "liga": liga or "Desconocida",
+                "equipo": club,
+                "pais": pais,
+                "edad": edad,
+                "valor_mercado": int(valor),
+            })
+
+        if jugadores:
+            print(f"[DB] {len(jugadores)} jugadores cargados desde futtrivia.db")
+            return jugadores
+        else:
+            raise Exception("No se encontraron jugadores con datos completos")
+
+    except Exception as e:
+        print(f"[AVISO] No se pudo cargar jugadores desde DB: {e}")
+        print("[AVISO] Usando lista de jugadores de respaldo")
+        return JUGADORES_RESPALDO
+
+
+# Lista de respaldo por si futtrivia.db no existe (ej. Juan o Daniel
+# clonaron el repo pero no corrieron los scripts de importación todavía)
+JUGADORES_RESPALDO = [
+    {"nombre": "Lionel Messi", "posicion": "Right Winger", "liga": "MLS", "equipo": "Inter Miami", "pais": "Argentina", "edad": 37, "valor_mercado": 20000000},
+    {"nombre": "Cristiano Ronaldo", "posicion": "Centre-Forward", "liga": "Saudi Pro League", "equipo": "Al Nassr", "pais": "Portugal", "edad": 39, "valor_mercado": 15000000},
+    {"nombre": "Kylian Mbappé", "posicion": "Centre-Forward", "liga": "La Liga", "equipo": "Real Madrid", "pais": "Francia", "edad": 25, "valor_mercado": 180000000},
+    {"nombre": "Erling Haaland", "posicion": "Centre-Forward", "liga": "Premier League", "equipo": "Manchester City", "pais": "Noruega", "edad": 23, "valor_mercado": 200000000},
+    {"nombre": "Vinícius Jr.", "posicion": "Left Winger", "liga": "La Liga", "equipo": "Real Madrid", "pais": "Brasil", "edad": 23, "valor_mercado": 180000000},
+    {"nombre": "Pedri", "posicion": "Central Midfield", "liga": "La Liga", "equipo": "Barcelona", "pais": "España", "edad": 22, "valor_mercado": 90000000},
+    {"nombre": "Lamine Yamal", "posicion": "Right Winger", "liga": "La Liga", "equipo": "Barcelona", "pais": "España", "edad": 17, "valor_mercado": 150000000},
+    {"nombre": "Jude Bellingham", "posicion": "Central Midfield", "liga": "La Liga", "equipo": "Real Madrid", "pais": "Inglaterra", "edad": 21, "valor_mercado": 180000000},
 ]
 
-ATRIBUTOS_PISTA = ["posicion", "liga", "equipo", "pais", "edad", "dorsal"]
+# Cargamos los jugadores al arrancar el servidor (una sola vez)
+JUGADORES = cargar_jugadores_desde_db(limite=300)
+
+ATRIBUTOS_PISTA = ["posicion", "liga", "equipo", "pais", "edad", "valor_mercado"]
+
 
 # ================================================================
 #  VALIDACIÓN DE ENTRADAS (INPUTS)
@@ -242,7 +326,7 @@ def intentar():
         valor = jugador[attr]
         resultado[attr] = {"valor": valor, "estado": "correcto" if valor == secreto[attr] else "incorrecto"}
 
-    for attr in ["edad", "dorsal"]:
+    for attr in ["edad", "valor_mercado"]:
         valor = jugador[attr]
         if valor == secreto[attr]:
             resultado[attr] = {"valor": valor, "estado": "correcto"}
