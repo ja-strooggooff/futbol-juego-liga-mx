@@ -111,9 +111,6 @@ def cargar_jugadores_desde_db(limite=50000):
             LEFT JOIN competitions c ON j.liga_codigo = c.competition_id
             WHERE j.nombre IS NOT NULL AND j.nombre != ''
             AND j.posicion IS NOT NULL AND j.posicion != ''
-            AND j.pais IS NOT NULL AND j.pais != ''
-            AND j.club IS NOT NULL AND j.club != ''
-            AND j.valor_mercado IS NOT NULL AND j.valor_mercado > 100000
             ORDER BY j.valor_mercado DESC
             LIMIT ?
         """, (limite,)).fetchall()
@@ -125,16 +122,16 @@ def cargar_jugadores_desde_db(limite=50000):
             nombre, posicion, pais, club, liga, fecha_nac, valor = fila
             edad = calcular_edad(fecha_nac)
             if edad is None:
-                continue  # sin edad no podemos hacer la comparacion numerica
+                continue  # sin edad no podemos comparar en Wordle, este si es necesario
 
             jugadores.append({
                 "nombre": nombre,
                 "posicion": posicion or "Desconocida",
                 "liga": liga or "Desconocida",
-                "equipo": club,
-                "pais": pais,
+                "equipo": club or "Sin equipo",
+                "pais": pais or "Desconocido",
                 "edad": edad,
-                "valor_mercado": int(valor),
+                "valor_mercado": int(valor) if valor else 0,
             })
 
         if jugadores:
@@ -163,7 +160,7 @@ JUGADORES_RESPALDO = [
 ]
 
 # Cargamos los jugadores al arrancar el servidor (una sola vez)
-JUGADORES = cargar_jugadores_desde_db(limite=50000)
+JUGADORES = cargar_jugadores_desde_db(limite=100000)
 
 ATRIBUTOS_PISTA = ["posicion", "liga", "equipo", "pais", "edad", "valor_mercado"]
 
