@@ -20,11 +20,11 @@ app = Flask(__name__)
 # por ahora lo dejamos fijo para desarrollo.
 app.secret_key = "cambia-esto-luego-con-env-var"
 
-app.config["SESSION_TYPE"] = "filesystem"
-app.config["SESSION_FILE_DIR"] = "./flask_sessions"
+from cachelib.file import FileSystemCache
+app.config["SESSION_TYPE"] = "cachelib"
+app.config["SESSION_CACHELIB"] = FileSystemCache("./flask_sessions")
 app.config["SESSION_PERMANENT"] = False
 Session(app)
-
 
 # ================================================================
 #  HISTORIAL DE PARTIDAS
