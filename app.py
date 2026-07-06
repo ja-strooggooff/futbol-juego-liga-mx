@@ -10,6 +10,7 @@ import random
 import datetime
 from flask import Flask, render_template, jsonify, request, session
 from flask_session import Session
+from sistema_dificultad import calcular_dificultad_jugador, calcular_dificultad_partido
 
 app = Flask(__name__)
 
@@ -909,17 +910,73 @@ def cargar_ids_partidos():
 IDS_PARTIDOS = cargar_ids_partidos()
 
 
+def cargar_datos_preguntas_nuevas():
+    """
+    Carga UNA SOLA VEZ (al arrancar) los candidatos para las preguntas
+    nuevas de goles, transferencias y valor de mercado. Solo lo barato:
+    jugadores con valor de mercado alto (~2,000) y transferencias caras
+    (~560). Los goles por jugador NO se precalculan aquí porque agregar
+    toda la tabla appearances (1.8M filas) tarda ~25 s; se consultan por
+    jugador al generar cada pregunta, usando el índice por player_id.
+    Igual que cargar_ids_partidos: si no hay base, listas vacías y el
+    juego sigue con el banco fijo.
+    """
+    try:
+        conexion = sqlite3.connect("futtrivia.db")
+        cursor = conexion.cursor()
+        jugadores = cursor.execute("""
+            SELECT player_id, nombre, valor_mercado
+            FROM jugadores_reales
+            WHERE valor_mercado >= 5000000 AND nombre IS NOT NULL
+        """).fetchall()
+        transferencias = cursor.execute("""
+            SELECT player_id, player_name, temporada,
+                   club_origen_nombre, club_destino_nombre, monto_transferencia
+            FROM transfers
+            WHERE monto_transferencia >= 10000000
+              AND player_name IS NOT NULL AND temporada IS NOT NULL
+              AND club_origen_nombre IS NOT NULL AND club_destino_nombre IS NOT NULL
+              AND club_origen_nombre != club_destino_nombre
+        """).fetchall()
+        conexion.close()
+        return jugadores, transferencias
+    except Exception:
+        return [], []
+
+
+JUGADORES_FAMOSOS, TRANSFERENCIAS_CARAS = cargar_datos_preguntas_nuevas()
+CLUBES_TRANSFERENCIA = sorted({t[4] for t in TRANSFERENCIAS_CARAS})
+
+
+def stats_jugador(cursor, player_id):
+    """Apariciones y goles de clubes de un jugador (consulta con índice, rápida)."""
+    fila = cursor.execute(
+        "SELECT COUNT(*), COALESCE(SUM(goles), 0) FROM appearances WHERE player_id = ?",
+        (player_id,)
+    ).fetchone()
+    return fila[0], fila[1]
+
+
+def dificultad_de_jugador(cursor, conexion, player_id, nombre, valor_mercado):
+    """Etiqueta de dificultad de una pregunta centrada en un jugador."""
+    apariciones, goles = stats_jugador(cursor, player_id)
+    etiqueta, _ = calcular_dificultad_jugador(
+        valor_mercado or 0, apariciones, goles, nombre, conexion
+    )
+    return etiqueta
+
+
 def generar_pregunta_desde_partido(cursor, partido_id):
     """Convierte un partido real de la base de datos en una pregunta de opción múltiple."""
     cursor.execute(
-        "SELECT equipo1, equipo2, goles1, goles2 FROM partidos WHERE id = ?",
+        "SELECT equipo1, equipo2, goles1, goles2, torneo, fecha FROM partidos WHERE id = ?",
         (partido_id,)
     )
     fila = cursor.fetchone()
     if fila is None:
         return None
 
-    equipo1, equipo2, goles1, goles2 = fila
+    equipo1, equipo2, goles1, goles2, torneo, fecha = fila
 
     if goles1 > goles2:
         ganador = equipo1
@@ -928,32 +985,134 @@ def generar_pregunta_desde_partido(cursor, partido_id):
     else:
         ganador = "Empate"
 
+    try:
+        anio = int((fecha or "")[:4])
+    except ValueError:
+        anio = None
+    dificultad, _ = calcular_dificultad_partido(torneo, anio)
+
     opciones = [equipo1, equipo2, "Empate"]
     return {
         "pregunta": f"¿Quién ganó el partido {equipo1} vs {equipo2}?",
         "opciones": opciones,
         "correcta": opciones.index(ganador),
+        "dificultad": dificultad,
     }
+
+
+def generar_pregunta_goles(generador, cursor, conexion):
+    """¿Quién marcó más goles? entre 4 jugadores reales (tabla appearances).
+    La dificultad sale del jugador de la respuesta correcta."""
+    if len(JUGADORES_FAMOSOS) < 4:
+        return None
+
+    for _ in range(10):  # reintenta si hay empate o puros ceros
+        candidatos = generador.sample(JUGADORES_FAMOSOS, 4)
+        datos = []
+        for player_id, nombre, valor in candidatos:
+            apariciones, goles = stats_jugador(cursor, player_id)
+            datos.append((player_id, nombre, valor, apariciones, goles))
+
+        goles_lista = [d[4] for d in datos]
+        maximo = max(goles_lista)
+        if maximo < 10 or goles_lista.count(maximo) > 1:
+            continue
+
+        indice = goles_lista.index(maximo)
+        player_id, nombre, valor, apariciones, goles = datos[indice]
+        etiqueta, _ = calcular_dificultad_jugador(valor, apariciones, goles, nombre, conexion)
+        return {
+            "pregunta": "¿Cuál de estos jugadores ha marcado más goles a nivel de clubes (desde 2012)?",
+            "opciones": [d[1] for d in datos],
+            "correcta": indice,
+            "dificultad": etiqueta,
+        }
+    return None
+
+
+def generar_pregunta_transferencia(generador, cursor, conexion):
+    """¿A qué club se transfirió X? con una transferencia real (tabla transfers).
+    El club de origen entra como distractor junto con 2 clubes al azar."""
+    if not TRANSFERENCIAS_CARAS or len(CLUBES_TRANSFERENCIA) < 4:
+        return None
+
+    player_id, nombre, temporada, origen, destino, _monto = generador.choice(TRANSFERENCIAS_CARAS)
+    distractores = [c for c in CLUBES_TRANSFERENCIA if c not in (destino, origen)]
+    if len(distractores) < 2:
+        return None
+
+    opciones = [destino, origen] + generador.sample(distractores, 2)
+    generador.shuffle(opciones)
+
+    fila = cursor.execute(
+        "SELECT valor_mercado FROM jugadores_reales WHERE player_id = ?", (player_id,)
+    ).fetchone()
+    valor = fila[0] if fila else 0
+
+    return {
+        "pregunta": f"¿A qué club se transfirió {nombre} en la temporada {temporada}?",
+        "opciones": opciones,
+        "correcta": opciones.index(destino),
+        "dificultad": dificultad_de_jugador(cursor, conexion, player_id, nombre, valor),
+    }
+
+
+def generar_pregunta_valor(generador, cursor, conexion):
+    """¿Quién vale más? entre 4 jugadores reales (tabla jugadores_reales).
+    La dificultad sale del jugador de la respuesta correcta."""
+    if len(JUGADORES_FAMOSOS) < 4:
+        return None
+
+    for _ in range(10):  # reintenta si hay empate en el valor máximo
+        candidatos = generador.sample(JUGADORES_FAMOSOS, 4)
+        valores = [c[2] for c in candidatos]
+        maximo = max(valores)
+        if valores.count(maximo) > 1:
+            continue
+
+        indice = valores.index(maximo)
+        player_id, nombre, valor = candidatos[indice]
+        return {
+            "pregunta": "¿Cuál de estos jugadores tiene el valor de mercado más alto?",
+            "opciones": [c[1] for c in candidatos],
+            "correcta": indice,
+            "dificultad": dificultad_de_jugador(cursor, conexion, player_id, nombre, valor),
+        }
+    return None
 
 
 def generar_pool_preguntas(generador, cantidad=10):
     """
-    Arma un conjunto mixto de preguntas: las generales (tu banco fijo
-    de 7) más varias generadas al azar desde los 90,000+ partidos reales.
+    Arma un conjunto mixto de preguntas: las generales (banco fijo de 7),
+    varias de "quién ganó" desde los 90,000+ partidos reales, y las nuevas
+    de goles (appearances), transferencias (transfers) y valor de mercado
+    (jugadores_reales). Cada pregunta generada lleva su etiqueta de
+    dificultad calculada con sistema_dificultad.py; las del banco fijo
+    son de cultura general y quedan como "Media".
     """
     pool = [
-        {"pregunta": p["pregunta"], "opciones": p["opciones"], "correcta": p["correcta"]}
+        {"pregunta": p["pregunta"], "opciones": p["opciones"], "correcta": p["correcta"], "dificultad": "Media"}
         for p in PREGUNTAS_TRIVIA
     ]
 
-    if IDS_PARTIDOS:
+    if IDS_PARTIDOS or JUGADORES_FAMOSOS or TRANSFERENCIAS_CARAS:
         conexion = sqlite3.connect("futtrivia.db")
         cursor = conexion.cursor()
-        elegidos = generador.sample(IDS_PARTIDOS, min(cantidad, len(IDS_PARTIDOS)))
-        for partido_id in elegidos:
-            pregunta = generar_pregunta_desde_partido(cursor, partido_id)
-            if pregunta:
-                pool.append(pregunta)
+
+        if IDS_PARTIDOS:
+            elegidos = generador.sample(IDS_PARTIDOS, min(cantidad, len(IDS_PARTIDOS)))
+            for partido_id in elegidos:
+                pregunta = generar_pregunta_desde_partido(cursor, partido_id)
+                if pregunta:
+                    pool.append(pregunta)
+
+        # 2 preguntas de cada tipo nuevo para que el pool tenga variedad
+        for generar in (generar_pregunta_goles, generar_pregunta_transferencia, generar_pregunta_valor):
+            for _ in range(2):
+                pregunta = generar(generador, cursor, conexion)
+                if pregunta:
+                    pool.append(pregunta)
+
         conexion.close()
 
     return pool
@@ -991,8 +1150,13 @@ def necesita_trivia_nueva(modo):
 
 
 def pregunta_publica(pregunta_completa):
-    """Quita el campo 'correcta' antes de mandarla al navegador."""
-    return {"pregunta": pregunta_completa["pregunta"], "opciones": pregunta_completa["opciones"]}
+    """Quita el campo 'correcta' antes de mandarla al navegador.
+    La dificultad sí se manda: es solo una etiqueta, no revela la respuesta."""
+    return {
+        "pregunta": pregunta_completa["pregunta"],
+        "opciones": pregunta_completa["opciones"],
+        "dificultad": pregunta_completa.get("dificultad", "Media"),
+    }
 
 
 @app.route("/trivia")
