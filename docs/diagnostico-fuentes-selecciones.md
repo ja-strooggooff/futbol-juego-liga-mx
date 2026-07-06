@@ -64,3 +64,14 @@ de duplicados son por lo tanto un piso, no un techo.
   es distinto (torneo, fase, titular/suplente, dorsal).
 - El traslape documentado arriba queda registrado aquí para cuando se quiera
   cruzar tablas (evitar contar dos veces el mismo partido).
+
+## Resultado de la importación (2026-07-06)
+
+| Tabla nueva | Filas importadas | Detalle |
+|-------------|------------------|---------|
+| `resultados_internacionales` | 49,501 | 1872-11-30 a 2026-07-11; 49,495 con marcador (las 6 sin marcador son partidos futuros); 2 filas del CSV eran duplicados exactos y el UNIQUE las descartó |
+| `apariciones_mundial` | 27,432 | 6,559 jugadores distintos; 14 Mundiales masculinos (1970–2022) y 7 femeninos (1991–2019); la fuente no trae alineaciones anteriores a 1970 |
+
+Scripts: `importar_resultados_internacionales.py` e
+`importar_apariciones_mundial.py`. Ambos son re-ejecutables sin duplicar
+(UNIQUE + INSERT OR IGNORE).
