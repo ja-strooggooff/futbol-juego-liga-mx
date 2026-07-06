@@ -1,21 +1,14 @@
 import sqlite3
-from sistema_dificultad import calcular_dificultad_jugador, calcular_dificultad_partido
-
-
-def contar_apariciones_seleccion(cursor, player_id):
-    """Cuenta cuántas veces un jugador jugó en torneos de selección nacional."""
-    resultado = cursor.execute("""
-        SELECT COUNT(*) FROM appearances a
-        JOIN competitions c ON a.competition_id = c.competition_id
-        WHERE a.player_id = ? AND c.tipo = 'national_team_competition'
-    """, (player_id,)).fetchone()
-    return resultado[0] if resultado else 0
-
+from sistema_dificultad import (
+    apariciones_seleccion_jugador,
+    calcular_dificultad_jugador,
+    calcular_dificultad_partido,
+)
 
 conexion = sqlite3.connect("futtrivia.db")
 cursor = conexion.cursor()
 
-print("=== DIFICULTAD DE JUGADORES FAMOSOS (v2 con selección nacional) ===")
+print("=== DIFICULTAD DE JUGADORES FAMOSOS (v3 con apariciones_mundial) ===")
 jugadores = cursor.execute("""
     SELECT j.player_id, j.nombre, j.valor_mercado,
            (SELECT COUNT(*) FROM appearances a WHERE a.player_id = j.player_id) as apariciones,
@@ -25,9 +18,9 @@ jugadores = cursor.execute("""
 """).fetchall()
 
 for player_id, nombre, valor, apariciones, goles in jugadores:
-    apariciones_sel = contar_apariciones_seleccion(cursor, player_id)
-    dificultad, puntaje = calcular_dificultad_jugador(valor, apariciones or 0, goles or 0, apariciones_sel)
-    print(f"  {nombre}: {dificultad} (puntaje: {puntaje}, apariciones selección: {apariciones_sel})")
+    apariciones_sel = apariciones_seleccion_jugador(nombre, conexion)
+    dificultad, puntaje = calcular_dificultad_jugador(valor, apariciones or 0, goles or 0, nombre, conexion)
+    print(f"  {nombre}: {dificultad} (puntaje: {puntaje}, apariciones en Mundiales: {apariciones_sel})")
 
 print()
 print("=== JUGADORES AL AZAR (para ver variedad) ===")
@@ -41,8 +34,7 @@ aleatorios = cursor.execute("""
 """).fetchall()
 
 for player_id, nombre, valor, apariciones, goles in aleatorios:
-    apariciones_sel = contar_apariciones_seleccion(cursor, player_id)
-    dificultad, puntaje = calcular_dificultad_jugador(valor, apariciones or 0, goles or 0, apariciones_sel)
+    dificultad, puntaje = calcular_dificultad_jugador(valor, apariciones or 0, goles or 0, nombre, conexion)
     print(f"  {nombre}: {dificultad} (puntaje: {puntaje})")
 
 print()

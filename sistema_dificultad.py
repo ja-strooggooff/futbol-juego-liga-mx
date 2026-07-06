@@ -11,26 +11,83 @@ jugadores retirados (poco peso a valor de mercado actual, más peso
 a trayectoria de carrera y presencia con selección nacional).
 Ajustado para audiencia mixta/internacional: ligas domésticas
 (incluida Liga MX) ya no llegan a "Fácil" solo por ser recientes.
+
+v3: la señal de selección nacional ya no es un parámetro que llegaba
+vacío — puntaje_fama_jugador() consulta las apariciones reales en
+Mundiales de la tabla apariciones_mundial (jfjelstul/worldcup),
+cruzando por nombre del jugador.
 """
 
 import math
 import datetime
+import sqlite3
 
+
+RUTA_BD = "futtrivia.db"
 
 TORNEOS_TOP = ["world cup", "copa mundial", "champions league", "copa libertadores", "euro", "eurocopa"]
 TORNEOS_MEDIOS = ["liga mx", "premier league", "la liga", "laliga", "serie a", "bundesliga", "ligue 1", "copa america", "mls"]
 
 
-def puntaje_fama_jugador(valor_mercado, total_apariciones, total_goles, apariciones_seleccion=0):
+def apariciones_seleccion_jugador(nombre_jugador, conexion=None):
+    """
+    Cuenta las apariciones REALES del jugador con su selección en Mundiales,
+    usando la tabla apariciones_mundial (fuente jfjelstul/worldcup).
+
+    El cruce es por nombre porque los player_id de esa tabla ('P-14758') no
+    son los de jugadores_reales (transfermarkt):
+    1. Empate exacto de nombre completo ('Lionel Messi' = nombre + apellido;
+       cuando la fuente marca el nombre como 'not applicable', el nombre
+       completo es solo el apellido, p. ej. el Ronaldo brasileño).
+    2. Si no hay empate, apellido exacto + prefijo del nombre, para apodos
+       tipo 'Rafa Márquez' -> 'Rafael Márquez'.
+    """
+    if not nombre_jugador or not nombre_jugador.strip():
+        return 0
+
+    cerrar_al_final = conexion is None
+    if conexion is None:
+        conexion = sqlite3.connect(RUTA_BD)
+    cursor = conexion.cursor()
+
+    try:
+        completo = nombre_jugador.strip().lower()
+        total = cursor.execute("""
+            SELECT COUNT(*) FROM apariciones_mundial
+            WHERE lower(CASE WHEN nombre = 'not applicable'
+                             THEN apellido
+                             ELSE nombre || ' ' || apellido END) = ?
+        """, (completo,)).fetchone()[0]
+        if total:
+            return total
+
+        partes = completo.rsplit(" ", 1)
+        if len(partes) == 2 and len(partes[0]) >= 3:
+            nombre_pila, apellido = partes
+            total = cursor.execute("""
+                SELECT COUNT(*) FROM apariciones_mundial
+                WHERE lower(apellido) = ?
+                  AND (lower(nombre) LIKE ? || '%' OR ? LIKE lower(nombre) || '%')
+            """, (apellido, nombre_pila, nombre_pila)).fetchone()[0]
+        return total
+    finally:
+        if cerrar_al_final:
+            conexion.close()
+
+
+def puntaje_fama_jugador(valor_mercado, total_apariciones, total_goles, nombre_jugador=None, conexion=None):
     """
     Calcula un puntaje 0-100 de qué tan 'reconocible' es un jugador.
 
-    Pesos (v2):
+    Pesos (v3):
     - valor_mercado actual: máx 20 (bajado, penaliza injustamente a retirados)
     - apariciones de carrera: máx 35 (trayectoria larga = reconocible)
     - goles: máx 10 (bajado, no penaliza a defensas/porteros)
-    - apariciones con selección nacional: máx 35 (nuevo, premia íconos
-      históricos sin depender del valor de mercado actual)
+    - apariciones con selección en Mundiales: máx 35. En v2 esto era un
+      parámetro que casi siempre llegaba vacío; ahora se consulta de verdad
+      en la tabla apariciones_mundial a partir de nombre_jugador. La escala
+      es /20 porque el récord de partidos jugados en Mundiales anda en ~26
+      (Messi), no en ~100 como los partidos totales de selección.
     """
     puntaje = 0
 
@@ -44,8 +101,10 @@ def puntaje_fama_jugador(valor_mercado, total_apariciones, total_goles, aparicio
     if total_goles:
         puntaje += min(total_goles / 150 * 10, 10)
 
-    if apariciones_seleccion:
-        puntaje += min(apariciones_seleccion / 100 * 35, 35)
+    if nombre_jugador:
+        apariciones_seleccion = apariciones_seleccion_jugador(nombre_jugador, conexion)
+        if apariciones_seleccion:
+            puntaje += min(apariciones_seleccion / 20 * 35, 35)
 
     return round(min(puntaje, 100), 1)
 
@@ -107,9 +166,9 @@ def asignar_dificultad(puntaje):
         return "Legendaria"
 
 
-def calcular_dificultad_jugador(valor_mercado, total_apariciones, total_goles, apariciones_seleccion=0):
+def calcular_dificultad_jugador(valor_mercado, total_apariciones, total_goles, nombre_jugador=None, conexion=None):
     """Función de conveniencia: calcula todo de un jugador de una vez."""
-    puntaje = puntaje_fama_jugador(valor_mercado, total_apariciones, total_goles, apariciones_seleccion)
+    puntaje = puntaje_fama_jugador(valor_mercado, total_apariciones, total_goles, nombre_jugador, conexion)
     return asignar_dificultad(puntaje), puntaje
 
 
