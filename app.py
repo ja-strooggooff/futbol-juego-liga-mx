@@ -1272,11 +1272,16 @@ def trivia_pista():
 
     pregunta = session[clave_preguntas][actual]
     correcta = pregunta["correcta"]
+    total_opciones = len(pregunta["opciones"])
 
-    # Elegimos 2 opciones incorrectas al azar para "tachar"
-    incorrectas = [i for i in range(4) if i != correcta]
+    # Tachamos opciones incorrectas al azar dejando siempre 2 en pie
+    # (la correcta y una incorrecta): con 4 opciones se tachan 2, con
+    # 3 opciones se tacha 1. Antes se asumían 4 opciones fijas y en las
+    # preguntas de 3 la pista podía señalar un índice inexistente o
+    # tachar todas las incorrectas y regalar la respuesta.
+    incorrectas = [i for i in range(total_opciones) if i != correcta]
     random.shuffle(incorrectas)
-    eliminar = incorrectas[:2]
+    eliminar = incorrectas[:max(total_opciones - 2, 0)]
 
     return jsonify({"modo": modo, "opciones_eliminadas": eliminar})
 
