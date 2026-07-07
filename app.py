@@ -681,22 +681,57 @@ def grid_pista():
 
 MAX_ERRORES_CONEXIONES = 4
 
-"""
-Elige un atributo (posición, liga, equipo o país) y agrupa
-a los jugadores según ese atributo. Solo es válido si hay
-al menos 2 grupos con 2+ jugadores cada uno.
-"""
-def generar_conexiones(generador):
+TAMANO_GRUPO_CONEXIONES = 4
+
+
+def generar_conexiones(generador, max_intentos=200):
+    """
+    Arma 4 grupos de 4 jugadores (estilo NYT Connections), igual que
+    el arreglo de generar_grid: partiendo de jugadores CONCRETOS.
+    El método viejo agrupaba el pool completo por un solo atributo y
+    mandaba los 47,000+ jugadores al tablero — injugable.
+
+    Cómo funciona:
+    1. Cada grupo sale de un jugador "ancla" elegido al azar: uno por
+       cada tipo (posición, liga, equipo y país), así las 4 categorías
+       son de tipos distintos y el tablero tiene variedad.
+    2. Los miembros de un grupo cumplen SU categoría y NINGUNA de las
+       otras 3, para que cada ficha pertenezca a exactamente un grupo
+       y el rompecabezas tenga una sola solución.
+    3. Se exigen 16 nombres distintos (hay homónimos en el pool); si
+       algo no cuadra, se reintenta con otras anclas.
+    """
     tipos = ["posicion", "liga", "equipo", "pais"]
-    generador.shuffle(tipos)
-    for tipo in tipos:
+
+    for _ in range(max_intentos):
+        categorias = []
+        for tipo in tipos:
+            ancla = generador.choice(JUGADORES)
+            categorias.append((tipo, ancla[tipo]))
+
+        valores = [v for _, v in categorias]
+        if len(set(valores)) < 4 or any(v in VALORES_PLACEHOLDER for v in valores):
+            continue
+
         grupos = {}
-        for jugador in JUGADORES:
-            valor = jugador[tipo]
-            grupos.setdefault(valor, []).append(jugador["nombre"])
-        grupos_validos = {k: v for k, v in grupos.items() if len(v) >= 2}
-        if len(grupos_validos) >= 2:
-            return {"tipo": tipo, "grupos": grupos_validos}
+        for tipo, valor in categorias:
+            candidatos = list(dict.fromkeys(
+                j["nombre"] for j in JUGADORES
+                if j[tipo] == valor
+                and not any(j[t2] == v2 for t2, v2 in categorias if t2 != tipo)
+            ))
+            if len(candidatos) < TAMANO_GRUPO_CONEXIONES:
+                break
+            grupos[valor] = generador.sample(candidatos, TAMANO_GRUPO_CONEXIONES)
+
+        if len(grupos) < 4:
+            continue
+
+        nombres = [n for miembros in grupos.values() for n in miembros]
+        if len(set(nombres)) != 4 * TAMANO_GRUPO_CONEXIONES:
+            continue  # un homónimo se coló en dos grupos
+
+        return {"tipo": "mixto", "grupos": grupos}
     return None
 
 def iniciar_nuevas_conexiones(modo):
