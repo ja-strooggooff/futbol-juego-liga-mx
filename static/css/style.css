@@ -504,3 +504,65 @@ a { color: inherit; text-decoration: none; }
 .grid-cell.resuelta:hover {
   background-color: #1e3a2f;
 }
+
+/* Conexiones */
+.conexiones-errores {
+  text-align: center;
+  font-size: 14px;
+  color: var(--texto-sub);
+  margin-bottom: 16px;
+}
+
+.conexiones-tablero {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  max-width: 600px;
+  margin: 0 auto 24px;
+}
+
+.conexion-tarjeta {
+  background: var(--fondo-card);
+  border: 1px solid var(--borde);
+  border-radius: 10px;
+  padding: 16px 8px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.conexion-tarjeta:hover {
+  background: var(--fondo-card2);
+  border-color: #444;
+}
+
+.conexion-tarjeta.seleccionada {
+  background: #1e3a5f;
+  border-color: #3b82f6;
+  color: #93c5fd;
+}
+
+.conexion-grupo-resuelto {
+  background: var(--fondo-card);
+  border: 1px solid var(--borde);
+  border-radius: 10px;
+  padding: 14px 20px;
+  margin-bottom: 10px;
+  max-width: 600px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.conexion-grupo-resuelto strong {
+  display: block;
+  font-size: 13px;
+  color: var(--verde);
+  margin-bottom: 4px;
+}
+
+.conexion-grupo-resuelto span {
+  font-size: 13px;
+  color: var(--texto-sub);
+}
