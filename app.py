@@ -457,22 +457,59 @@ def obtener_generador(modo, prefijo):
 
 
 
+VALORES_PLACEHOLDER = {"Desconocida", "Desconocido", "Sin equipo"}
+
+
 def generar_grid(generador, max_intentos=500):
-    categorias_dict = construir_categorias()
-    categorias_utiles = [c for c in categorias_dict.items() if len(c[1]) >= 2]
-    if len(categorias_utiles) < 6:
+    """
+    Construye el tablero partiendo de jugadores CONCRETOS, no de
+    categorías al azar. Con 47,000+ jugadores el método viejo (elegir
+    6 categorías y cruzar los dedos para que las 9 intersecciones no
+    estuvieran vacías) fallaba prácticamente siempre.
+
+    Cómo funciona:
+    1. Se elige un jugador "ancla" al azar y un tipo para las columnas
+       (posición, liga, equipo o país). Los otros 3 tipos, con los
+       valores del ancla, son las 3 filas.
+    2. Los "testigos" son los jugadores que comparten esos 3 atributos
+       con el ancla. Las columnas son 3 valores distintos del tipo de
+       columna tomados de los testigos.
+    3. Garantía: el testigo de la columna j cumple las 3 filas (por ser
+       testigo) y su propia columna, así que las 9 celdas tienen al
+       menos un jugador válido — sin verificación extra.
+    """
+    if len(JUGADORES) < 9:
         return None
 
+    tipos = ["posicion", "liga", "equipo", "pais"]
+
     for _ in range(max_intentos):
-        generador.shuffle(categorias_utiles)
-        filas = categorias_utiles[:3]
-        columnas = categorias_utiles[3:6]
-        valido = all(set(jf) & set(jc) for (_, jf) in filas for (_, jc) in columnas)
-        if valido:
-            return {
-                "filas": [{"tipo": k[0], "valor": k[1]} for k, _ in filas],
-                "columnas": [{"tipo": k[0], "valor": k[1]} for k, _ in columnas],
-            }
+        ancla = generador.choice(JUGADORES)
+        tipo_columnas = generador.choice(tipos)
+        tipos_filas = [t for t in tipos if t != tipo_columnas]
+
+        if any(ancla[t] in VALORES_PLACEHOLDER for t in tipos_filas):
+            continue
+
+        valores_columna = []
+        for jugador in JUGADORES:
+            if all(jugador[t] == ancla[t] for t in tipos_filas):
+                valor = jugador[tipo_columnas]
+                if valor not in VALORES_PLACEHOLDER and valor not in valores_columna:
+                    valores_columna.append(valor)
+                    if len(valores_columna) >= 8:
+                        break  # con 8 opciones ya hay variedad de sobra
+
+        if len(valores_columna) < 3:
+            continue  # ancla demasiado rara (ej. único de su país en su liga)
+
+        return {
+            "filas": [{"tipo": t, "valor": ancla[t]} for t in tipos_filas],
+            "columnas": [
+                {"tipo": tipo_columnas, "valor": v}
+                for v in generador.sample(valores_columna, 3)
+            ],
+        }
     return None
 
 
