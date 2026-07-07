@@ -8,6 +8,7 @@
 import sqlite3
 import random
 import datetime
+import unicodedata
 from flask import Flask, render_template, jsonify, request, session
 from flask_session import Session
 from sistema_dificultad import calcular_dificultad_jugador, calcular_dificultad_partido
@@ -166,6 +167,81 @@ JUGADORES = cargar_jugadores_desde_db(limite=100000)
 ATRIBUTOS_PISTA = ["posicion", "liga", "equipo", "pais", "edad", "valor_mercado"]
 
 
+def normalizar_nombre(texto):
+    """
+    Minúsculas y sin acentos (misma idea que buscar.py): así
+    'gonzalez' encuentra 'González' y 'MESSI' encuentra 'Messi'.
+    """
+    if not texto:
+        return ""
+    texto = unicodedata.normalize("NFD", texto.lower())
+    return "".join(c for c in texto if unicodedata.category(c) != "Mn")
+
+
+# Índice precalculado (nombre normalizado + sus palabras → jugador)
+# para no normalizar 47,000+ nombres en cada intento del usuario.
+INDICE_NOMBRES = [
+    (normalizar_nombre(j["nombre"]), frozenset(normalizar_nombre(j["nombre"]).split()), j)
+    for j in JUGADORES
+]
+
+
+def _unico_o_error(candidatos, nombre_buscado):
+    if len(candidatos) == 1:
+        return candidatos[0], None
+
+    # Desempate por fama: los candidatos vienen ordenados por valor de
+    # mercado (JUGADORES se carga así). Si el primero es MUY superior
+    # al segundo (10x) y realmente conocido, es el que el usuario
+    # quiso decir: 'messi' → Lionel Messi, no Rayane Messi.
+    primero, segundo = candidatos[0], candidatos[1]
+    if primero["valor_mercado"] >= 5000000 and primero["valor_mercado"] >= 10 * max(segundo["valor_mercado"], 1):
+        return primero, None
+
+    ejemplos = ", ".join(j["nombre"] for j in candidatos[:3])
+    return None, f"Hay {len(candidatos)} jugadores que coinciden con '{nombre_buscado}' (ej: {ejemplos}). Escribe más letras."
+
+
+def buscar_jugador_flexible(nombre_buscado):
+    """
+    Búsqueda tolerante para los intentos de Wordle y Grid, en 3 niveles
+    (siempre sin acentos ni mayúsculas, como buscar.py):
+    1. Nombre completo exacto: 'lionel messi' → Lionel Messi.
+    2. Palabras completas: 'messi' → Lionel Messi (no confunde con
+       Junior Messias, porque 'messi' no es una palabra de ese nombre).
+    3. Subcadena: 'lewand' → Robert Lewandowski.
+    En los niveles 2 y 3 solo se acepta un ganador ÚNICO; con varios
+    ('gonzalez') se pide precisar, sin gastarle intentos al usuario.
+
+    Regresa (jugador, None) si hay ganador único, o (None, mensaje).
+    """
+    consulta = normalizar_nombre(nombre_buscado)
+    if not consulta:
+        return None, "Nombre de jugador requerido"
+    palabras_consulta = set(consulta.split())
+
+    por_palabra = []
+    por_subcadena = []
+    nombres_vistos = set()
+    for nombre_norm, palabras, jugador in INDICE_NOMBRES:
+        if nombre_norm == consulta:
+            return jugador, None
+        if jugador["nombre"] in nombres_vistos:
+            continue
+        if palabras_consulta <= palabras:
+            nombres_vistos.add(jugador["nombre"])
+            por_palabra.append(jugador)
+        elif consulta in nombre_norm:
+            nombres_vistos.add(jugador["nombre"])
+            por_subcadena.append(jugador)
+
+    if por_palabra:
+        return _unico_o_error(por_palabra, nombre_buscado)
+    if por_subcadena:
+        return _unico_o_error(por_subcadena, nombre_buscado)
+    return None, f"No se encontró ningún jugador con '{nombre_buscado}'"
+
+
 # ================================================================
 #  VALIDACIÓN DE ENTRADAS (INPUTS)
 #
@@ -315,13 +391,13 @@ def intentar():
     if session.get(clave_terminado):
         return jsonify({"error": "El juego ya terminó."}), 400
 
-    nombre_intento = limpiar_texto(data.get("nombre", "")).lower()
+    nombre_intento = limpiar_texto(data.get("nombre", ""))
     if not nombre_intento:
         return jsonify({"error": "Nombre de jugador requerido"}), 400
 
-    jugador = next((j for j in JUGADORES if j["nombre"].lower() == nombre_intento), None)
+    jugador, error_busqueda = buscar_jugador_flexible(nombre_intento)
     if jugador is None:
-        return jsonify({"error": "Jugador no encontrado"}), 404
+        return jsonify({"error": error_busqueda}), 404
 
     secreto = next(j for j in JUGADORES if j["nombre"] == session[clave_secreto])
 
@@ -580,7 +656,7 @@ def grid_intentar():
 
     fila = data.get("fila")
     columna = data.get("columna")
-    nombre_intento = limpiar_texto(data.get("nombre", "")).lower()
+    nombre_intento = limpiar_texto(data.get("nombre", ""))
 
     if not es_entero_en_rango(fila, 0, 2) or not es_entero_en_rango(columna, 0, 2):
         return jsonify({"error": "Fila y columna deben ser números entre 0 y 2"}), 400
@@ -593,12 +669,13 @@ def grid_intentar():
 
     if session[clave_resueltas].get(celda_key):
         return jsonify({"error": "Esta celda ya está resuelta"}), 400
-    if nombre_intento in [n.lower() for n in session[clave_usados]]:
-        return jsonify({"error": "Ese jugador ya fue usado en este tablero"}), 400
 
-    jugador = next((j for j in JUGADORES if j["nombre"].lower() == nombre_intento), None)
+    jugador, error_busqueda = buscar_jugador_flexible(nombre_intento)
     if jugador is None:
-        return jsonify({"error": "Jugador no encontrado"}), 404
+        return jsonify({"error": error_busqueda}), 404
+
+    if jugador["nombre"] in session[clave_usados]:
+        return jsonify({"error": "Ese jugador ya fue usado en este tablero"}), 400
 
     cat_fila = session[clave]["filas"][fila]
     cat_col = session[clave]["columnas"][columna]
@@ -1472,7 +1549,7 @@ def escudo_intentar():
         return jsonify({"error": "Equipo requerido"}), 400
 
     secreto = session[clave_secreto]
-    gano = equipo_intento.lower() == secreto.lower()
+    gano = normalizar_nombre(equipo_intento) == normalizar_nombre(secreto)
 
     session[clave_intentos] += 1
     if gano or session[clave_intentos] >= MAX_INTENTOS_ESCUDO:

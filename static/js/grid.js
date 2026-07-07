@@ -472,13 +472,22 @@ async function reiniciarPartida() {
    4. AUTOCOMPLETADO (usa GET /api/jugadores)
    ================================================================
    Son ~47,000 nombres: meterlos todos a un <datalist> traba el
-   navegador, así que se filtran a máximo 10 sugerencias por tecleo. */
+   navegador, así que se filtran a máximo 10 sugerencias por tecleo.
+   La comparación ignora acentos y mayúsculas ('gonzalez' encuentra
+   'González'), igual que el backend. */
+
+function ftNormalizar(texto) {
+  return texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
 
 async function cargarAutocompletado() {
   try {
     const respuesta = await fetch("/api/jugadores");
     if (!respuesta.ok) return;
-    nombresJugadores = await respuesta.json();
+    nombresJugadores = (await respuesta.json()).map((nombre) => ({
+      nombre,
+      norm: ftNormalizar(nombre),
+    }));
   } catch (err) {
     return; // sin autocompletado se puede jugar igual
   }
@@ -489,17 +498,24 @@ async function cargarAutocompletado() {
   input.setAttribute("list", "ft-lista-jugadores");
 
   input.addEventListener("input", () => {
-    const texto = input.value.trim().toLowerCase();
+    const texto = ftNormalizar(input.value.trim());
     lista.innerHTML = "";
     if (texto.length < 2) return;
-    let agregados = 0;
-    for (const nombre of nombresJugadores) {
-      if (nombre.toLowerCase().includes(texto)) {
-        const opcion = document.createElement("option");
-        opcion.value = nombre;
-        lista.appendChild(opcion);
-        if (++agregados >= 10) break;
+
+    // Primero los que EMPIEZAN con lo tecleado, luego el resto
+    const prefijo = [];
+    const contiene = [];
+    for (const j of nombresJugadores) {
+      if (j.norm.startsWith(texto)) {
+        if (prefijo.push(j.nombre) >= 10) break;
+      } else if (contiene.length < 10 && j.norm.includes(texto)) {
+        contiene.push(j.nombre);
       }
+    }
+    for (const nombre of prefijo.concat(contiene).slice(0, 10)) {
+      const opcion = document.createElement("option");
+      opcion.value = nombre;
+      lista.appendChild(opcion);
     }
   });
 }
