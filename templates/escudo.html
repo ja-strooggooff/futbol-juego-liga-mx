@@ -2,20 +2,57 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Adivina el Escudo · FutTrivia</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
+
   <nav class="navbar">
     <div class="nav-inner">
-      <a href="/" class="nav-logo"><span>⚽</span><span>FutTrivia</span></a>
-      <div class="nav-links"><a href="/" class="nav-link">Juegos</a></div>
+      <a href="/" class="nav-logo">
+        <span>⚽</span>
+        <span>FutTrivia</span>
+      </a>
+      <div class="nav-links">
+        <a href="/" class="nav-link">Juegos</a>
+      </div>
     </div>
   </nav>
-  <section style="max-width:700px;margin:40px auto;padding:0 24px;">
-    <a href="/" style="color:#888;font-size:14px;">← Volver</a>
-    <h1 style="font-size:28px;margin:16px 0;">Adivina el Escudo</h1>
-    <p style="color:#888;">Backend listo (con emojis como placeholder). El tablero visual y los escudos reales los conecta Juan/Daniel con JavaScript.</p>
+
+  <section class="wordle-page">
+    <div class="wordle-header">
+      <a href="/" class="back-link">← Volver</a>
+      <h1 class="wordle-title">Adivina el Escudo</h1>
+      <p class="wordle-sub" id="escudo-contador">Tienes <strong>5</strong> intentos. Cada fallo revela una pista.</p>
+    </div>
+
+    <div class="escudo-visor" id="escudo-visor">?</div>
+    <div class="escudo-pistas" id="escudo-pistas"></div>
+
+    <div class="wordle-input-area">
+      <input
+        type="text"
+        id="equipo-input"
+        class="wordle-input"
+        placeholder="Ej: Real Madrid"
+        autocomplete="off"
+      />
+      <button class="btn-primary" onclick="intentarEquipo()">Intentar</button>
+      <button class="btn-secondary" id="btn-pista" onclick="pedirPista()">Pista</button>
+      <button class="btn-secondary" id="reiniciar-btn" onclick="reiniciarPartida()" disabled>Reiniciar</button>
+    </div>
+
+    <div class="wordle-result hidden" id="result-msg"></div>
   </section>
+
+  <footer class="footer">
+    <div class="footer-inner">
+      <span>⚽ FutTrivia</span>
+      <span>Proyecto de verano 2025</span>
+    </div>
+  </footer>
+
+  <script src="{{ url_for('static', filename='js/escudo.js') }}"></script>
 </body>
 </html>
