@@ -186,6 +186,37 @@ INDICE_NOMBRES = [
 ]
 
 
+# ================================================================
+#  LIGAS JUGABLES
+#
+#  El usuario puede jugar con todo el pool ("todas") o filtrar por
+#  liga. Los valores de "ligas_jugadores" son los nombres que trae
+#  el campo liga de JUGADORES (vienen de la tabla competitions).
+# ================================================================
+
+LIGAS_JUGABLES = {
+    "mx": {"nombre": "Liga MX", "ligas_jugadores": {"liga-mx-clausura"}},
+    "argentina": {"nombre": "Liga Argentina", "ligas_jugadores": {"torneo-apertura"}},
+}
+
+
+def liga_valida(valor):
+    """'mx' y 'argentina' son ligas reales; cualquier otra cosa es 'todas'."""
+    return valor if valor in LIGAS_JUGABLES else "todas"
+
+
+JUGADORES_POR_LIGA = {"todas": JUGADORES}
+INDICE_POR_LIGA = {"todas": INDICE_NOMBRES}
+for _clave_liga, _info_liga in LIGAS_JUGABLES.items():
+    JUGADORES_POR_LIGA[_clave_liga] = [
+        j for j in JUGADORES if j["liga"] in _info_liga["ligas_jugadores"]
+    ]
+    INDICE_POR_LIGA[_clave_liga] = [
+        entrada for entrada in INDICE_NOMBRES
+        if entrada[2]["liga"] in _info_liga["ligas_jugadores"]
+    ]
+
+
 def _unico_o_error(candidatos, nombre_buscado):
     if len(candidatos) == 1:
         return candidatos[0], None
@@ -202,7 +233,7 @@ def _unico_o_error(candidatos, nombre_buscado):
     return None, f"Hay {len(candidatos)} jugadores que coinciden con '{nombre_buscado}' (ej: {ejemplos}). Escribe más letras."
 
 
-def buscar_jugador_flexible(nombre_buscado):
+def buscar_jugador_flexible(nombre_buscado, liga="todas"):
     """
     Búsqueda tolerante para los intentos de Wordle y Grid, en 3 niveles
     (siempre sin acentos ni mayúsculas, como buscar.py):
@@ -212,6 +243,7 @@ def buscar_jugador_flexible(nombre_buscado):
     3. Subcadena: 'lewand' → Robert Lewandowski.
     En los niveles 2 y 3 solo se acepta un ganador ÚNICO; con varios
     ('gonzalez') se pide precisar, sin gastarle intentos al usuario.
+    Si se juega con liga filtrada, solo busca en jugadores de esa liga.
 
     Regresa (jugador, None) si hay ganador único, o (None, mensaje).
     """
@@ -223,7 +255,7 @@ def buscar_jugador_flexible(nombre_buscado):
     por_palabra = []
     por_subcadena = []
     nombres_vistos = set()
-    for nombre_norm, palabras, jugador in INDICE_NOMBRES:
+    for nombre_norm, palabras, jugador in INDICE_POR_LIGA[liga_valida(liga)]:
         if nombre_norm == consulta:
             return jugador, None
         if jugador["nombre"] in nombres_vistos:
@@ -239,7 +271,8 @@ def buscar_jugador_flexible(nombre_buscado):
         return _unico_o_error(por_palabra, nombre_buscado)
     if por_subcadena:
         return _unico_o_error(por_subcadena, nombre_buscado)
-    return None, f"No se encontró ningún jugador con '{nombre_buscado}'"
+    donde = f" en {LIGAS_JUGABLES[liga]['nombre']}" if liga in LIGAS_JUGABLES else ""
+    return None, f"No se encontró ningún jugador con '{nombre_buscado}'{donde}"
 
 
 # ================================================================
@@ -291,30 +324,37 @@ def es_entero_en_rango(valor, minimo, maximo):
     Por ahora es al azar; cuando hagamos el "reto diario" esta función
     cambiará para elegir siempre el mismo jugador en el mismo día.
     """
-def obtener_jugador_del_dia():
+def obtener_jugador_del_dia(liga="todas"):
     hoy = datetime.date.today().isoformat()
-    generador = random.Random(hoy)
-    return generador.choice(JUGADORES)
+    # Con liga 'todas' la semilla es solo la fecha (compatibilidad con
+    # el reto diario que ya estaba corriendo); cada liga tiene el suyo.
+    semilla = hoy if liga == "todas" else f"{hoy}-{liga}"
+    generador = random.Random(semilla)
+    return generador.choice(JUGADORES_POR_LIGA[liga])
 
 
-def iniciar_partida_wordle(modo):
+def iniciar_partida_wordle(modo, liga="todas"):
+    liga = liga_valida(liga)
     if modo == "diario":
-        jugador_secreto = obtener_jugador_del_dia()
+        jugador_secreto = obtener_jugador_del_dia(liga)
     else:
-        jugador_secreto = random.choice(JUGADORES)
+        jugador_secreto = random.choice(JUGADORES_POR_LIGA[liga])
 
     session[f"wordle_{modo}_secreto"] = jugador_secreto["nombre"]
     session[f"wordle_{modo}_intentos"] = 0
     session[f"wordle_{modo}_terminado"] = False
     session[f"wordle_{modo}_pistas_usadas"] = []
+    session[f"wordle_{modo}_liga"] = liga
 
     if modo == "diario":
         session["wordle_diario_fecha"] = datetime.date.today().isoformat()
 
 
-def necesita_partida_nueva(modo):
+def necesita_partida_nueva(modo, liga="todas"):
     clave_secreto = f"wordle_{modo}_secreto"
     if clave_secreto not in session:
+        return True
+    if session.get(f"wordle_{modo}_liga", "todas") != liga_valida(liga):
         return True
     if modo == "diario":
         fecha_guardada = session.get("wordle_diario_fecha")
@@ -348,8 +388,9 @@ def wordle():
     modo = request.args.get("modo", "practica")
     if modo not in ("diario", "practica"):
         modo = "practica"
-    if necesita_partida_nueva(modo):
-        iniciar_partida_wordle(modo)
+    liga = liga_valida(request.args.get("liga", "todas"))
+    if necesita_partida_nueva(modo, liga):
+        iniciar_partida_wordle(modo, liga)
     return render_template("wordle.html")
 
 
@@ -359,8 +400,10 @@ def wordle():
 
 @app.route("/api/jugadores")
 def lista_jugadores():
-    """Devuelve solo los nombres, para el autocomplete del input."""
-    nombres = [j["nombre"] for j in JUGADORES]
+    """Devuelve solo los nombres, para el autocomplete del input.
+    Acepta ?liga=mx|argentina para sugerir solo jugadores de esa liga."""
+    liga = liga_valida(request.args.get("liga", "todas"))
+    nombres = [j["nombre"] for j in JUGADORES_POR_LIGA[liga]]
     return jsonify(nombres)
 
 
@@ -395,7 +438,8 @@ def intentar():
     if not nombre_intento:
         return jsonify({"error": "Nombre de jugador requerido"}), 400
 
-    jugador, error_busqueda = buscar_jugador_flexible(nombre_intento)
+    liga_partida = session.get(f"wordle_{modo}_liga", "todas")
+    jugador, error_busqueda = buscar_jugador_flexible(nombre_intento, liga_partida)
     if jugador is None:
         return jsonify({"error": error_busqueda}), 404
 
@@ -492,7 +536,7 @@ def wordle_reiniciar():
     if modo == "diario":
         return jsonify({"error": "El reto diario no se puede reiniciar. Vuelve mañana."}), 400
 
-    iniciar_partida_wordle("practica")
+    iniciar_partida_wordle("practica", session.get("wordle_practica_liga", "todas"))
     return jsonify({"ok": True})
 
 
@@ -536,7 +580,52 @@ def obtener_generador(modo, prefijo):
 VALORES_PLACEHOLDER = {"Desconocida", "Desconocido", "Sin equipo"}
 
 
-def generar_grid(generador, max_intentos=500):
+def generar_grid_de_liga(generador, pool, max_intentos=100):
+    """
+    Tablero para una liga específica: filas = 3 equipos de la liga,
+    columnas = 3 países o 3 posiciones. (El algoritmo general usa el
+    tipo 'liga' en las categorías, pero con el pool filtrado esa
+    categoría se vuelve trivial: todos son de la misma liga.)
+    Garantía: solo se eligen equipos que tienen al menos un jugador
+    para CADA valor de columna.
+    """
+    if len(pool) < 9:
+        return None
+
+    por_equipo = {}
+    for jugador in pool:
+        if jugador["equipo"] not in VALORES_PLACEHOLDER:
+            por_equipo.setdefault(jugador["equipo"], []).append(jugador)
+    equipos = [e for e, js in por_equipo.items() if len(js) >= 3]
+    if len(equipos) < 3:
+        return None
+
+    for _ in range(max_intentos):
+        tipo_columnas = generador.choice(["pais", "posicion"])
+        equipo_ancla = generador.choice(equipos)
+        valores = list(dict.fromkeys(
+            j[tipo_columnas] for j in por_equipo[equipo_ancla]
+            if j[tipo_columnas] not in VALORES_PLACEHOLDER
+        ))
+        if len(valores) < 3:
+            continue
+        columnas = generador.sample(valores, 3)
+
+        equipos_validos = [
+            e for e in equipos
+            if all(any(j[tipo_columnas] == v for j in por_equipo[e]) for v in columnas)
+        ]
+        if len(equipos_validos) < 3:
+            continue
+
+        return {
+            "filas": [{"tipo": "equipo", "valor": e} for e in generador.sample(equipos_validos, 3)],
+            "columnas": [{"tipo": tipo_columnas, "valor": v} for v in columnas],
+        }
+    return None
+
+
+def generar_grid(generador, max_intentos=500, liga="todas"):
     """
     Construye el tablero partiendo de jugadores CONCRETOS, no de
     categorías al azar. Con 47,000+ jugadores el método viejo (elegir
@@ -553,7 +642,14 @@ def generar_grid(generador, max_intentos=500):
     3. Garantía: el testigo de la columna j cumple las 3 filas (por ser
        testigo) y su propia columna, así que las 9 celdas tienen al
        menos un jugador válido — sin verificación extra.
+
+    Con liga filtrada delega en generar_grid_de_liga (equipos × país
+    o posición), porque aquí el tipo 'liga' pierde sentido.
     """
+    liga = liga_valida(liga)
+    if liga != "todas":
+        return generar_grid_de_liga(generador, JUGADORES_POR_LIGA[liga])
+
     if len(JUGADORES) < 9:
         return None
 
@@ -594,21 +690,26 @@ def jugador_cumple(jugador, tipo, valor):
     return jugador[tipo] == valor
 
 
-def iniciar_nuevo_grid(modo):
-    generador = obtener_generador(modo, "grid")
-    grid = generar_grid(generador)
+def iniciar_nuevo_grid(modo, liga="todas"):
+    liga = liga_valida(liga)
+    prefijo = "grid" if liga == "todas" else f"grid-{liga}"
+    generador = obtener_generador(modo, prefijo)
+    grid = generar_grid(generador, liga=liga)
 
     session[f"grid_{modo}"] = grid
     session[f"grid_{modo}_usados"] = []
     session[f"grid_{modo}_resueltas"] = {}
+    session[f"grid_{modo}_liga"] = liga
 
     if modo == "diario":
         session["grid_diario_fecha"] = datetime.date.today().isoformat()
 
 
-def necesita_grid_nuevo(modo):
+def necesita_grid_nuevo(modo, liga="todas"):
     clave = f"grid_{modo}"
     if clave not in session or session[clave] is None:
+        return True
+    if session.get(f"grid_{modo}_liga", "todas") != liga_valida(liga):
         return True
     if modo == "diario":
         if session.get("grid_diario_fecha") != datetime.date.today().isoformat():
@@ -620,8 +721,9 @@ def grid_page():
     modo = request.args.get("modo", "practica")
     if modo not in ("diario", "practica"):
         modo = "practica"
-    if necesita_grid_nuevo(modo):
-        iniciar_nuevo_grid(modo)
+    liga = liga_valida(request.args.get("liga", "todas"))
+    if necesita_grid_nuevo(modo, liga):
+        iniciar_nuevo_grid(modo, liga)
     return render_template("grid.html")
 
 
@@ -670,7 +772,9 @@ def grid_intentar():
     if session[clave_resueltas].get(celda_key):
         return jsonify({"error": "Esta celda ya está resuelta"}), 400
 
-    jugador, error_busqueda = buscar_jugador_flexible(nombre_intento)
+    jugador, error_busqueda = buscar_jugador_flexible(
+        nombre_intento, session.get(f"grid_{modo}_liga", "todas")
+    )
     if jugador is None:
         return jsonify({"error": error_busqueda}), 404
 
@@ -710,7 +814,7 @@ def grid_reiniciar():
     if modo == "diario":
         return jsonify({"error": "El grid diario no se puede reiniciar. Vuelve mañana."}), 400
 
-    iniciar_nuevo_grid("practica")
+    iniciar_nuevo_grid("practica", session.get("grid_practica_liga", "todas"))
     return jsonify({"ok": True})
 
 @app.route("/api/grid/pista", methods=["POST"])
@@ -761,7 +865,7 @@ MAX_ERRORES_CONEXIONES = 4
 TAMANO_GRUPO_CONEXIONES = 4
 
 
-def generar_conexiones(generador, max_intentos=200):
+def generar_conexiones(generador, max_intentos=200, liga="todas"):
     """
     Arma 4 grupos de 4 jugadores (estilo NYT Connections), igual que
     el arreglo de generar_grid: partiendo de jugadores CONCRETOS.
@@ -771,19 +875,31 @@ def generar_conexiones(generador, max_intentos=200):
     Cómo funciona:
     1. Cada grupo sale de un jugador "ancla" elegido al azar: uno por
        cada tipo (posición, liga, equipo y país), así las 4 categorías
-       son de tipos distintos y el tablero tiene variedad.
+       son de tipos distintos y el tablero tiene variedad. Con liga
+       filtrada el tipo 'liga' se vuelve trivial (todos son de la
+       misma), así que los 4 grupos salen de posición/equipo/país
+       con un tipo repetido (valores distintos).
     2. Los miembros de un grupo cumplen SU categoría y NINGUNA de las
        otras 3, para que cada ficha pertenezca a exactamente un grupo
        y el rompecabezas tenga una sola solución.
     3. Se exigen 16 nombres distintos (hay homónimos en el pool); si
        algo no cuadra, se reintenta con otras anclas.
     """
-    tipos = ["posicion", "liga", "equipo", "pais"]
+    liga = liga_valida(liga)
+    pool = JUGADORES_POR_LIGA[liga]
+    if len(pool) < 4 * TAMANO_GRUPO_CONEXIONES:
+        return None
 
     for _ in range(max_intentos):
+        if liga == "todas":
+            tipos = ["posicion", "liga", "equipo", "pais"]
+        else:
+            tipos = ["posicion", "equipo", "pais"]
+            tipos = tipos + [generador.choice(tipos)]
+
         categorias = []
         for tipo in tipos:
-            ancla = generador.choice(JUGADORES)
+            ancla = generador.choice(pool)
             categorias.append((tipo, ancla[tipo]))
 
         valores = [v for _, v in categorias]
@@ -793,9 +909,9 @@ def generar_conexiones(generador, max_intentos=200):
         grupos = {}
         for tipo, valor in categorias:
             candidatos = list(dict.fromkeys(
-                j["nombre"] for j in JUGADORES
+                j["nombre"] for j in pool
                 if j[tipo] == valor
-                and not any(j[t2] == v2 for t2, v2 in categorias if t2 != tipo)
+                and not any(j[t2] == v2 for t2, v2 in categorias if (t2, v2) != (tipo, valor))
             ))
             if len(candidatos) < TAMANO_GRUPO_CONEXIONES:
                 break
@@ -811,9 +927,11 @@ def generar_conexiones(generador, max_intentos=200):
         return {"tipo": "mixto", "grupos": grupos}
     return None
 
-def iniciar_nuevas_conexiones(modo):
-    generador = obtener_generador(modo, "conexiones")
-    resultado = generar_conexiones(generador)
+def iniciar_nuevas_conexiones(modo, liga="todas"):
+    liga = liga_valida(liga)
+    prefijo = "conexiones" if liga == "todas" else f"conexiones-{liga}"
+    generador = obtener_generador(modo, prefijo)
+    resultado = generar_conexiones(generador, liga=liga)
 
     if resultado is None:
         session[f"conexiones_{modo}"] = None
@@ -828,14 +946,17 @@ def iniciar_nuevas_conexiones(modo):
     session[f"conexiones_{modo}"] = {"tipo": resultado["tipo"], "grupos": grupos, "tablero": tablero}
     session[f"conexiones_{modo}_resueltos"] = []
     session[f"conexiones_{modo}_errores"] = 0
+    session[f"conexiones_{modo}_liga"] = liga
 
     if modo == "diario":
         session["conexiones_diario_fecha"] = datetime.date.today().isoformat()
 
 
-def necesita_conexiones_nuevas(modo):
+def necesita_conexiones_nuevas(modo, liga="todas"):
     clave = f"conexiones_{modo}"
     if clave not in session or session[clave] is None:
+        return True
+    if session.get(f"conexiones_{modo}_liga", "todas") != liga_valida(liga):
         return True
     if modo == "diario":
         if session.get("conexiones_diario_fecha") != datetime.date.today().isoformat():
@@ -847,8 +968,9 @@ def conexiones_page():
     modo = request.args.get("modo", "practica")
     if modo not in ("diario", "practica"):
         modo = "practica"
-    if necesita_conexiones_nuevas(modo):
-        iniciar_nuevas_conexiones(modo)
+    liga = liga_valida(request.args.get("liga", "todas"))
+    if necesita_conexiones_nuevas(modo, liga):
+        iniciar_nuevas_conexiones(modo, liga)
     return render_template("conexiones.html")
 
 
@@ -954,7 +1076,7 @@ def conexiones_reiniciar():
     if modo == "diario":
         return jsonify({"error": "Las conexiones de hoy no se pueden reiniciar. Vuelve mañana."}), 400
 
-    iniciar_nuevas_conexiones("practica")
+    iniciar_nuevas_conexiones("practica", session.get("conexiones_practica_liga", "todas"))
     return jsonify({"ok": True})
 
 
@@ -1038,25 +1160,32 @@ PREGUNTAS_POR_PARTIDA = 5
 
 def cargar_ids_partidos():
     """
-    Carga UNA SOLA VEZ (al arrancar el servidor) la lista de IDs de
-    partidos históricos disponibles. Así no consultamos la base de
-    datos completa cada vez que alguien empieza una partida de trivia.
-    Si el archivo futtrivia.db no existe (alguien clonó el repo y no
-    corrió el script de descarga todavía), el juego sigue funcionando
-    con las preguntas fijas, sin tronar.
+    Carga UNA SOLA VEZ (al arrancar el servidor) los IDs de partidos
+    históricos, clasificados por liga (el torneo dice de dónde viene:
+    'mexico-txt/...' y '.../mx.1.json' son Liga MX, 'argentina-txt/...'
+    es la liga argentina). Así no consultamos la base completa cada
+    vez que alguien empieza una trivia. Si futtrivia.db no existe,
+    el juego sigue funcionando con las preguntas fijas, sin tronar.
     """
+    por_liga = {"todas": [], "mx": [], "argentina": []}
     try:
         conexion = sqlite3.connect("futtrivia.db")
         cursor = conexion.cursor()
-        cursor.execute("SELECT id FROM partidos")
-        ids = [fila[0] for fila in cursor.fetchall()]
+        for id_partido, torneo in cursor.execute("SELECT id, torneo FROM partidos"):
+            por_liga["todas"].append(id_partido)
+            torneo = (torneo or "").lower()
+            if torneo.startswith("mexico-txt/") or "/mx." in torneo:
+                por_liga["mx"].append(id_partido)
+            elif torneo.startswith("argentina-txt/"):
+                por_liga["argentina"].append(id_partido)
         conexion.close()
-        return ids
     except Exception:
-        return []
+        pass
+    return por_liga
 
 
-IDS_PARTIDOS = cargar_ids_partidos()
+IDS_PARTIDOS_POR_LIGA = cargar_ids_partidos()
+IDS_PARTIDOS = IDS_PARTIDOS_POR_LIGA["todas"]
 
 
 def cargar_datos_preguntas_nuevas():
@@ -1074,18 +1203,23 @@ def cargar_datos_preguntas_nuevas():
         conexion = sqlite3.connect("futtrivia.db")
         cursor = conexion.cursor()
         jugadores = cursor.execute("""
-            SELECT player_id, nombre, valor_mercado
-            FROM jugadores_reales
-            WHERE valor_mercado >= 5000000 AND nombre IS NOT NULL
+            SELECT j.player_id, j.nombre, j.valor_mercado,
+                   COALESCE(c.nombre, j.liga_codigo) AS liga
+            FROM jugadores_reales j
+            LEFT JOIN competitions c ON j.liga_codigo = c.competition_id
+            WHERE j.valor_mercado >= 1000000 AND j.nombre IS NOT NULL
         """).fetchall()
         transferencias = cursor.execute("""
-            SELECT player_id, player_name, temporada,
-                   club_origen_nombre, club_destino_nombre, monto_transferencia
-            FROM transfers
-            WHERE monto_transferencia >= 10000000
-              AND player_name IS NOT NULL AND temporada IS NOT NULL
-              AND club_origen_nombre IS NOT NULL AND club_destino_nombre IS NOT NULL
-              AND club_origen_nombre != club_destino_nombre
+            SELECT t.player_id, t.player_name, t.temporada,
+                   t.club_origen_nombre, t.club_destino_nombre, t.monto_transferencia,
+                   COALESCE(c.nombre, j.liga_codigo) AS liga
+            FROM transfers t
+            LEFT JOIN jugadores_reales j ON j.player_id = t.player_id
+            LEFT JOIN competitions c ON j.liga_codigo = c.competition_id
+            WHERE t.monto_transferencia >= 1000000
+              AND t.player_name IS NOT NULL AND t.temporada IS NOT NULL
+              AND t.club_origen_nombre IS NOT NULL AND t.club_destino_nombre IS NOT NULL
+              AND t.club_origen_nombre != t.club_destino_nombre
         """).fetchall()
         conexion.close()
         return jugadores, transferencias
@@ -1093,7 +1227,29 @@ def cargar_datos_preguntas_nuevas():
         return [], []
 
 
-JUGADORES_FAMOSOS, TRANSFERENCIAS_CARAS = cargar_datos_preguntas_nuevas()
+_FAMOSOS_CRUDO, _TRANSFERENCIAS_CRUDO = cargar_datos_preguntas_nuevas()
+
+# Por liga: con el pool completo se piden umbrales altos (jugadores
+# de 5M+/transferencias de 10M+); dentro de una liga se relajan a 1M
+# porque los montos de Liga MX/Argentina son más chicos.
+FAMOSOS_POR_LIGA = {
+    "todas": [(pid, n, v) for pid, n, v, _ in _FAMOSOS_CRUDO if v >= 5000000],
+}
+TRANSFERENCIAS_POR_LIGA = {
+    "todas": [t[:6] for t in _TRANSFERENCIAS_CRUDO if t[5] >= 10000000],
+}
+for _clave_liga, _info_liga in LIGAS_JUGABLES.items():
+    FAMOSOS_POR_LIGA[_clave_liga] = [
+        (pid, n, v) for pid, n, v, liga in _FAMOSOS_CRUDO
+        if liga in _info_liga["ligas_jugadores"]
+    ]
+    TRANSFERENCIAS_POR_LIGA[_clave_liga] = [
+        t[:6] for t in _TRANSFERENCIAS_CRUDO
+        if t[6] in _info_liga["ligas_jugadores"]
+    ]
+
+JUGADORES_FAMOSOS = FAMOSOS_POR_LIGA["todas"]
+TRANSFERENCIAS_CARAS = TRANSFERENCIAS_POR_LIGA["todas"]
 CLUBES_TRANSFERENCIA = sorted({t[4] for t in TRANSFERENCIAS_CARAS})
 
 
@@ -1149,14 +1305,14 @@ def generar_pregunta_desde_partido(cursor, partido_id):
     }
 
 
-def generar_pregunta_goles(generador, cursor, conexion):
+def generar_pregunta_goles(generador, cursor, conexion, famosos):
     """¿Quién marcó más goles? entre 4 jugadores reales (tabla appearances).
     La dificultad sale del jugador de la respuesta correcta."""
-    if len(JUGADORES_FAMOSOS) < 4:
+    if len(famosos) < 4:
         return None
 
     for _ in range(10):  # reintenta si hay empate o puros ceros
-        candidatos = generador.sample(JUGADORES_FAMOSOS, 4)
+        candidatos = generador.sample(famosos, 4)
         datos = []
         for player_id, nombre, valor in candidatos:
             apariciones, goles = stats_jugador(cursor, player_id)
@@ -1179,14 +1335,14 @@ def generar_pregunta_goles(generador, cursor, conexion):
     return None
 
 
-def generar_pregunta_transferencia(generador, cursor, conexion):
+def generar_pregunta_transferencia(generador, cursor, conexion, transferencias, clubes):
     """¿A qué club se transfirió X? con una transferencia real (tabla transfers).
     El club de origen entra como distractor junto con 2 clubes al azar."""
-    if not TRANSFERENCIAS_CARAS or len(CLUBES_TRANSFERENCIA) < 4:
+    if not transferencias or len(clubes) < 4:
         return None
 
-    player_id, nombre, temporada, origen, destino, _monto = generador.choice(TRANSFERENCIAS_CARAS)
-    distractores = [c for c in CLUBES_TRANSFERENCIA if c not in (destino, origen)]
+    player_id, nombre, temporada, origen, destino, _monto = generador.choice(transferencias)
+    distractores = [c for c in clubes if c not in (destino, origen)]
     if len(distractores) < 2:
         return None
 
@@ -1206,14 +1362,14 @@ def generar_pregunta_transferencia(generador, cursor, conexion):
     }
 
 
-def generar_pregunta_valor(generador, cursor, conexion):
+def generar_pregunta_valor(generador, cursor, conexion, famosos):
     """¿Quién vale más? entre 4 jugadores reales (tabla jugadores_reales).
     La dificultad sale del jugador de la respuesta correcta."""
-    if len(JUGADORES_FAMOSOS) < 4:
+    if len(famosos) < 4:
         return None
 
     for _ in range(10):  # reintenta si hay empate en el valor máximo
-        candidatos = generador.sample(JUGADORES_FAMOSOS, 4)
+        candidatos = generador.sample(famosos, 4)
         valores = [c[2] for c in candidatos]
         maximo = max(valores)
         if valores.count(maximo) > 1:
@@ -1230,35 +1386,45 @@ def generar_pregunta_valor(generador, cursor, conexion):
     return None
 
 
-def generar_pool_preguntas(generador, cantidad=10):
+def generar_pool_preguntas(generador, cantidad=10, liga="todas"):
     """
     Arma un conjunto mixto de preguntas: las generales (banco fijo de 7),
     varias de "quién ganó" desde los 90,000+ partidos reales, y las nuevas
     de goles (appearances), transferencias (transfers) y valor de mercado
-    (jugadores_reales). Cada pregunta generada lleva su etiqueta de
-    dificultad calculada con sistema_dificultad.py; las del banco fijo
-    son de cultura general y quedan como "Media".
+    (jugadores_reales). Con liga filtrada, los partidos y jugadores salen
+    solo de esa liga (el banco fijo se queda: es cultura futbolera
+    general). Cada pregunta generada lleva su etiqueta de dificultad
+    calculada con sistema_dificultad.py.
     """
+    liga = liga_valida(liga)
+    ids_partidos = IDS_PARTIDOS_POR_LIGA[liga]
+    famosos = FAMOSOS_POR_LIGA[liga]
+    transferencias = TRANSFERENCIAS_POR_LIGA[liga]
+    clubes = sorted({t[4] for t in transferencias})
+
     pool = [
         {"pregunta": p["pregunta"], "opciones": p["opciones"], "correcta": p["correcta"], "dificultad": "Media"}
         for p in PREGUNTAS_TRIVIA
     ]
 
-    if IDS_PARTIDOS or JUGADORES_FAMOSOS or TRANSFERENCIAS_CARAS:
+    if ids_partidos or famosos or transferencias:
         conexion = sqlite3.connect("futtrivia.db")
         cursor = conexion.cursor()
 
-        if IDS_PARTIDOS:
-            elegidos = generador.sample(IDS_PARTIDOS, min(cantidad, len(IDS_PARTIDOS)))
+        if ids_partidos:
+            elegidos = generador.sample(ids_partidos, min(cantidad, len(ids_partidos)))
             for partido_id in elegidos:
                 pregunta = generar_pregunta_desde_partido(cursor, partido_id)
                 if pregunta:
                     pool.append(pregunta)
 
         # 2 preguntas de cada tipo nuevo para que el pool tenga variedad
-        for generar in (generar_pregunta_goles, generar_pregunta_transferencia, generar_pregunta_valor):
-            for _ in range(2):
-                pregunta = generar(generador, cursor, conexion)
+        for _ in range(2):
+            for pregunta in (
+                generar_pregunta_goles(generador, cursor, conexion, famosos),
+                generar_pregunta_transferencia(generador, cursor, conexion, transferencias, clubes),
+                generar_pregunta_valor(generador, cursor, conexion, famosos),
+            ):
                 if pregunta:
                     pool.append(pregunta)
 
@@ -1267,7 +1433,7 @@ def generar_pool_preguntas(generador, cantidad=10):
     return pool
 
 
-def iniciar_nueva_trivia(modo):
+def iniciar_nueva_trivia(modo, liga="todas"):
     """
     Ahora arma un pool mixto (preguntas fijas + preguntas reales de
     partidos históricos), lo mezcla, y elige las primeras 5.
@@ -1276,21 +1442,26 @@ def iniciar_nueva_trivia(modo):
     lista fija — las generamos al vuelo. La respuesta correcta nunca
     se manda al navegador hasta que el usuario contesta.
     """
-    generador = obtener_generador(modo, "trivia")
-    pool = generar_pool_preguntas(generador, cantidad=10)
+    liga = liga_valida(liga)
+    prefijo = "trivia" if liga == "todas" else f"trivia-{liga}"
+    generador = obtener_generador(modo, prefijo)
+    pool = generar_pool_preguntas(generador, cantidad=10, liga=liga)
     generador.shuffle(pool)
 
     session[f"trivia_{modo}_preguntas"] = pool[:PREGUNTAS_POR_PARTIDA]
     session[f"trivia_{modo}_actual"] = 0
     session[f"trivia_{modo}_aciertos"] = 0
+    session[f"trivia_{modo}_liga"] = liga
 
     if modo == "diario":
         session["trivia_diario_fecha"] = datetime.date.today().isoformat()
 
 
-def necesita_trivia_nueva(modo):
+def necesita_trivia_nueva(modo, liga="todas"):
     clave = f"trivia_{modo}_preguntas"
     if clave not in session:
+        return True
+    if session.get(f"trivia_{modo}_liga", "todas") != liga_valida(liga):
         return True
     if modo == "diario":
         if session.get("trivia_diario_fecha") != datetime.date.today().isoformat():
@@ -1313,8 +1484,9 @@ def trivia_page():
     modo = request.args.get("modo", "practica")
     if modo not in ("diario", "practica"):
         modo = "practica"
-    if necesita_trivia_nueva(modo):
-        iniciar_nueva_trivia(modo)
+    liga = liga_valida(request.args.get("liga", "todas"))
+    if necesita_trivia_nueva(modo, liga):
+        iniciar_nueva_trivia(modo, liga)
     return render_template("trivia.html")
 
 
@@ -1396,7 +1568,7 @@ def trivia_reiniciar():
     if modo == "diario":
         return jsonify({"error": "La trivia de hoy no se puede reiniciar. Vuelve mañana."}), 400
 
-    iniciar_nueva_trivia("practica")
+    iniciar_nueva_trivia("practica", session.get("trivia_practica_liga", "todas"))
     return jsonify({"ok": True})
 
 @app.route("/api/trivia/pista", methods=["POST"])
@@ -1449,26 +1621,48 @@ ESCUDOS = {
     "Real Madrid": {"emoji": "👑", "pais": "España", "liga": "La Liga"},
     "Manchester City": {"emoji": "🩵", "pais": "Inglaterra", "liga": "Premier League"},
     "Barcelona": {"emoji": "🔵", "pais": "España", "liga": "La Liga"},
+    # Liga MX
+    "Club América": {"emoji": "🦅", "pais": "México", "liga": "Liga MX"},
+    "Chivas": {"emoji": "🐐", "pais": "México", "liga": "Liga MX"},
+    "Cruz Azul": {"emoji": "🚂", "pais": "México", "liga": "Liga MX"},
+    "Pumas": {"emoji": "🐆", "pais": "México", "liga": "Liga MX"},
+    # Liga Argentina
+    "Boca Juniors": {"emoji": "💛", "pais": "Argentina", "liga": "Liga Argentina"},
+    "River Plate": {"emoji": "🎗️", "pais": "Argentina", "liga": "Liga Argentina"},
+    "Racing Club": {"emoji": "🩵", "pais": "Argentina", "liga": "Liga Argentina"},
+    "Independiente": {"emoji": "😈", "pais": "Argentina", "liga": "Liga Argentina"},
+}
+
+# Qué equipos entran en cada selección de liga del jugador
+ESCUDOS_POR_LIGA = {
+    "todas": list(ESCUDOS.keys()),
+    "mx": [n for n, info in ESCUDOS.items() if info["liga"] == "Liga MX"],
+    "argentina": [n for n, info in ESCUDOS.items() if info["liga"] == "Liga Argentina"],
 }
 
 MAX_INTENTOS_ESCUDO = 5
 
 
-def iniciar_partida_escudo(modo):
-    generador = obtener_generador(modo, "escudo")
-    equipo_secreto = generador.choice(list(ESCUDOS.keys()))
+def iniciar_partida_escudo(modo, liga="todas"):
+    liga = liga_valida(liga)
+    prefijo = "escudo" if liga == "todas" else f"escudo-{liga}"
+    generador = obtener_generador(modo, prefijo)
+    equipo_secreto = generador.choice(ESCUDOS_POR_LIGA[liga])
 
     session[f"escudo_{modo}_secreto"] = equipo_secreto
     session[f"escudo_{modo}_intentos"] = 0
     session[f"escudo_{modo}_terminado"] = False
+    session[f"escudo_{modo}_liga"] = liga
 
     if modo == "diario":
         session["escudo_diario_fecha"] = datetime.date.today().isoformat()
 
 
-def necesita_escudo_nuevo(modo):
+def necesita_escudo_nuevo(modo, liga="todas"):
     clave = f"escudo_{modo}_secreto"
     if clave not in session:
+        return True
+    if session.get(f"escudo_{modo}_liga", "todas") != liga_valida(liga):
         return True
     if modo == "diario":
         if session.get("escudo_diario_fecha") != datetime.date.today().isoformat():
@@ -1501,8 +1695,9 @@ def escudo_page():
     modo = request.args.get("modo", "practica")
     if modo not in ("diario", "practica"):
         modo = "practica"
-    if necesita_escudo_nuevo(modo):
-        iniciar_partida_escudo(modo)
+    liga = liga_valida(request.args.get("liga", "todas"))
+    if necesita_escudo_nuevo(modo, liga):
+        iniciar_partida_escudo(modo, liga)
     return render_template("escudo.html")
 
 
@@ -1577,7 +1772,7 @@ def escudo_reiniciar():
     if modo == "diario":
         return jsonify({"error": "El escudo de hoy no se puede reiniciar. Vuelve mañana."}), 400
 
-    iniciar_partida_escudo("practica")
+    iniciar_partida_escudo("practica", session.get("escudo_practica_liga", "todas"))
     return jsonify({"ok": True})
 
 @app.route("/api/escudo/pista", methods=["POST"])

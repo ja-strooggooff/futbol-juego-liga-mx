@@ -139,6 +139,32 @@ a { color: inherit; text-decoration: none; }
   .ft-carta:hover { transform: none; }
 }
 
+/* SELECTOR DE LIGA (en los 5 juegos) */
+.ft-ligas {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+.ft-ligas a {
+  padding: 7px 16px;
+  border: 1px solid var(--borde);
+  border-radius: 4px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--texto-muted);
+  transition: color 0.15s, border-color 0.15s;
+}
+.ft-ligas a:hover { color: var(--texto); border-color: var(--texto-sub); }
+.ft-ligas a.activa {
+  background: var(--verde);
+  border-color: var(--verde);
+  color: var(--ft-tinta);
+  font-weight: 600;
+}
+
 /* HERO */
 .hero {
   position: relative;
