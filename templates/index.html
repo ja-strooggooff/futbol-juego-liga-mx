@@ -1,103 +1,108 @@
-<main class="home-dashboard">
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FutTrivia</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
 
-  <section class="top-grid">
-    <article class="daily-challenge module module-featured">
-      <div class="module-label">Reto del día</div>
-      <h1 class="challenge-title">Adivina el jugador</h1>
-      <p class="challenge-sub">
-        Descubre al futbolista oculto con pistas de posición, liga, país, edad y dorsal.
-      </p>
-
-      <div class="challenge-meta">
-        <span>Liga MX</span>
-        <span>8 intentos</span>
-        <span>Dificultad media</span>
+  <nav class="navbar">
+    <div class="nav-inner">
+      <a href="/" class="nav-logo">
+        <span class="nav-logo-arco"><svg viewBox="0 0 140 100" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <ellipse cx="72" cy="56" rx="60" ry="40" fill="#a9b475"/>
+          <g stroke="#f1eee3" stroke-width="1.2" opacity="0.85">
+            <path d="M46 38 V72 M59 38 V74 M72 38 V74 M85 38 V74 M98 38 V72"/>
+            <path d="M46 47 H98 M46 56 H98 M46 65 H98"/>
+            <path d="M28 40 L46 47 M28 56 L46 58 M28 72 L46 70"/>
+            <path d="M112 40 L98 47 M112 56 L98 58 M112 72 L98 70"/>
+          </g>
+          <g stroke="#f1eee3" stroke-width="4" stroke-linecap="round">
+            <path d="M28 88 V24 H112 V88"/>
+            <path d="M46 38 H98 M46 38 V74 M98 38 V74"/>
+            <path d="M28 24 L46 38 M112 24 L98 38 M28 88 L46 74 M112 88 L98 74"/>
+            <path d="M16 88 H124"/>
+          </g>
+        </svg></span>
+        <span>FutTrivia</span>
+      </a>
+      <div class="nav-links">
+        <a href="#juegos" class="nav-link">Juegos</a>
       </div>
+    </div>
+  </nav>
 
-      <div class="challenge-stats">
-        <div>
-          <strong>1,284</strong>
-          <span>jugadas hoy</span>
-        </div>
-        <div>
-          <strong>37%</strong>
-          <span>lo resolvió</span>
-        </div>
-        <div>
-          <strong>02:14</strong>
-          <span>promedio</span>
-        </div>
-      </div>
+  <!-- Landing: logo de portería centrado, como la referencia aprobada -->
+  <header class="ft-hero">
+    <div class="ft-hero-logo">
+      <svg viewBox="0 0 150 108" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <ellipse cx="78" cy="62" rx="62" ry="42" fill="#a9b475"/>
+        <g stroke="#f1eee3" stroke-width="1.2" opacity="0.85">
+          <path d="M52 44 V78 M65 44 V80 M78 44 V80 M91 44 V80 M104 44 V78"/>
+          <path d="M52 53 H104 M52 62 H104 M52 71 H104"/>
+          <path d="M34 46 L52 53 M34 62 L52 64 M34 78 L52 76"/>
+          <path d="M118 46 L104 53 M118 62 L104 64 M118 78 L104 76"/>
+        </g>
+        <g stroke="#f1eee3" stroke-width="4" stroke-linecap="round">
+          <path d="M34 94 V30 H118 V94"/>
+          <path d="M52 44 H104 M52 44 V80 M104 44 V80"/>
+          <path d="M34 30 L52 44 M118 30 L104 44 M34 94 L52 80 M118 94 L104 80"/>
+          <path d="M22 94 H130"/>
+        </g>
+        <!-- pelota con rayitas de velocidad, entrando al arco -->
+        <g class="ft-hero-pelota">
+          <circle cx="36" cy="16" r="10" stroke="#f1eee3" stroke-width="2.5" fill="#212620"/>
+          <path d="M36 11 L40.8 14.5 L39 20.2 L33 20.2 L31.2 14.5 Z" stroke="#f1eee3" stroke-width="1.5" fill="none"/>
+          <path d="M20 8 L14 6 M20 14 L13 14 M20 20 L14 22" stroke="#f1eee3" stroke-width="2" stroke-linecap="round"/>
+        </g>
+      </svg>
+    </div>
+    <h1 class="ft-hero-titulo">FutTrivia</h1>
+    <p class="ft-hero-sub">Cinco juegos diarios de fútbol: adivina, agrupa y demuestra cuánto sabes.</p>
+    <a href="#juegos" class="btn-primary">Jugar</a>
+  </header>
 
-      <a href="/wordle" class="btn-main">Jugar reto</a>
-    </article>
+  <!-- Selección de juegos: tarjetas numeradas, como la referencia -->
+  <main class="ft-juegos-seccion" id="juegos">
+    <p class="ft-label">Elegí tu juego</p>
 
-    <aside class="side-column">
-      <section class="module mini-scoreboard">
-        <div class="module-label">Tu racha</div>
-        <div class="big-stat">7</div>
-        <p>Días consecutivos acertando</p>
-      </section>
+    <div class="ft-juegos">
+      <a href="/wordle" class="ft-carta">
+        <span class="ft-carta-num">01</span>
+        <h2>Adivina el Jugador</h2>
+        <p>El futbolista oculto del día. 8 intentos con pistas de posición, liga, país, edad y valor.</p>
+      </a>
+      <a href="/grid" class="ft-carta">
+        <span class="ft-carta-num">02</span>
+        <h2>Grid de Equipos</h2>
+        <p>El 3×3 imposible: un jugador que cumpla la fila y la columna a la vez.</p>
+      </a>
+      <a href="/trivia" class="ft-carta">
+        <span class="ft-carta-num">03</span>
+        <h2>Trivia Rápida</h2>
+        <p>5 preguntas de partidos, goles, transferencias y récords reales. Con dificultad.</p>
+      </a>
+      <a href="/conexiones" class="ft-carta">
+        <span class="ft-carta-num">04</span>
+        <h2>Conexiones</h2>
+        <p>16 jugadores, 4 grupos secretos. Encuentra qué comparten antes de 4 errores.</p>
+      </a>
+      <a href="/escudo" class="ft-carta">
+        <span class="ft-carta-num">05</span>
+        <h2>Adivina el Escudo</h2>
+        <p>Un club oculto y pistas que se destapan: país, liga, inicial y escudo.</p>
+      </a>
+    </div>
+  </main>
 
-      <section class="module mini-scoreboard">
-        <div class="module-label">Mejor marca</div>
-        <div class="big-stat">12</div>
-        <p>Retos acertados seguidos</p>
-      </section>
+  <footer class="footer">
+    <div class="footer-inner">
+      <span>⚽ FutTrivia</span>
+      <span>Proyecto de verano 2025</span>
+    </div>
+  </footer>
 
-      <section class="module ranking-box">
-        <div class="module-label">Ranking semanal</div>
-        <ol class="ranking-list">
-          <li><span>1. Jorge</span><strong>145 pts</strong></li>
-          <li><span>2. Daniel</span><strong>132 pts</strong></li>
-          <li><span>3. Juan</span><strong>121 pts</strong></li>
-        </ol>
-      </section>
-    </aside>
-  </section>
-
-  <section class="bottom-grid">
-    <section class="module games-panel">
-      <div class="module-label">Juegos</div>
-      <div class="games-list">
-        <div class="game-row">
-          <span>Adivina el jugador</span>
-          <span class="tag easy">Fácil</span>
-        </div>
-        <div class="game-row">
-          <span>Adivina el escudo</span>
-          <span class="tag medium">Medio</span>
-        </div>
-        <div class="game-row">
-          <span>Trivia rápida</span>
-          <span class="tag easy">Fácil</span>
-        </div>
-        <div class="game-row">
-          <span>Conexiones</span>
-          <span class="tag hard">Difícil</span>
-        </div>
-      </div>
-    </section>
-
-    <section class="module activity-panel">
-      <div class="module-label">Actividad reciente</div>
-      <ul class="activity-list">
-        <li>Daniel acertó el reto en 5 intentos</li>
-        <li>Jorge subió al 1er lugar del ranking</li>
-        <li>Juan logró una racha de 4 días</li>
-        <li>Nuevo reto disponible en Liga Argentina</li>
-      </ul>
-    </section>
-
-    <section class="module stats-panel">
-      <div class="module-label">Tus estadísticas</div>
-      <div class="stats-grid">
-        <div><strong>68%</strong><span>acierto</span></div>
-        <div><strong>43</strong><span>retos jugados</span></div>
-        <div><strong>5.2</strong><span>intentos promedio</span></div>
-        <div><strong>9</strong><span>racha actual</span></div>
-      </div>
-    </section>
-  </section>
-
-</main>
+</body>
+</html>
