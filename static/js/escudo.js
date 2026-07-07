@@ -248,6 +248,7 @@ function ftConectarSalidas() {
 
 const params = new URLSearchParams(window.location.search);
 const modo = params.get("modo") === "diario" ? "diario" : "practica";
+const ligaActual = ["mx", "argentina"].includes(params.get("liga")) ? params.get("liga") : "todas";
 
 const visor = document.getElementById("escudo-visor");
 const pistasDiv = document.getElementById("escudo-pistas");
@@ -469,3 +470,15 @@ input.addEventListener("keydown", (e) => {
   if (e.key === "Enter") intentarEquipo();
 });
 input.focus();
+
+/* Selector de liga (Todas / Liga MX / Liga Argentina): marca la activa
+   y arma los enlaces conservando el modo actual. */
+(function ftInicializarSelectorLiga() {
+  const selector = document.getElementById("ft-ligas");
+  if (!selector) return;
+  selector.querySelectorAll("a").forEach((enlace) => {
+    const liga = enlace.dataset.liga;
+    enlace.href = `${window.location.pathname}?modo=${modo}&liga=${liga}`;
+    if (liga === ligaActual) enlace.classList.add("activa");
+  });
+})();
