@@ -254,6 +254,7 @@ function ftConectarSalidas() {
 const params = new URLSearchParams(window.location.search);
 const modo = params.get("modo") === "diario" ? "diario" : "practica";
 const ligaActual = ["mx", "argentina"].includes(params.get("liga")) ? params.get("liga") : "todas";
+const dificultadActual = ["facil", "media", "dificil", "legendaria"].includes(params.get("dificultad")) ? params.get("dificultad") : "todas";
 
 const board = document.getElementById("board");
 const input = document.getElementById("player-input");
@@ -513,14 +514,21 @@ input.addEventListener("keydown", (e) => {
 });
 input.focus();
 
-/* Selector de liga (Todas / Liga MX / Liga Argentina): marca la activa
-   y arma los enlaces conservando el modo actual. */
-(function ftInicializarSelectorLiga() {
-  const selector = document.getElementById("ft-ligas");
-  if (!selector) return;
-  selector.querySelectorAll("a").forEach((enlace) => {
+/* Selectores de liga y dificultad: cada uno marca su opción activa y
+   arma los enlaces conservando el modo Y el otro filtro (así cualquier
+   combinación liga × dificultad es alcanzable). */
+(function ftInicializarSelectores() {
+  const base = window.location.pathname;
+  const ligas = document.getElementById("ft-ligas");
+  if (ligas) ligas.querySelectorAll("a").forEach((enlace) => {
     const liga = enlace.dataset.liga;
-    enlace.href = `${window.location.pathname}?modo=${modo}&liga=${liga}`;
+    enlace.href = `${base}?modo=${modo}&liga=${liga}&dificultad=${dificultadActual}`;
     if (liga === ligaActual) enlace.classList.add("activa");
+  });
+  const dificultades = document.getElementById("ft-dificultades");
+  if (dificultades) dificultades.querySelectorAll("a").forEach((enlace) => {
+    const dificultad = enlace.dataset.dificultad;
+    enlace.href = `${base}?modo=${modo}&liga=${ligaActual}&dificultad=${dificultad}`;
+    if (dificultad === dificultadActual) enlace.classList.add("activa");
   });
 })();

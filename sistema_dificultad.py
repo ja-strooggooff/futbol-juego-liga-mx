@@ -75,7 +75,8 @@ def apariciones_seleccion_jugador(nombre_jugador, conexion=None):
             conexion.close()
 
 
-def puntaje_fama_jugador(valor_mercado, total_apariciones, total_goles, nombre_jugador=None, conexion=None):
+def puntaje_fama_jugador(valor_mercado, total_apariciones, total_goles, nombre_jugador=None, conexion=None,
+                         apariciones_seleccion=None):
     """
     Calcula un puntaje 0-100 de qué tan 'reconocible' es un jugador.
 
@@ -88,6 +89,9 @@ def puntaje_fama_jugador(valor_mercado, total_apariciones, total_goles, nombre_j
       en la tabla apariciones_mundial a partir de nombre_jugador. La escala
       es /20 porque el récord de partidos jugados en Mundiales anda en ~26
       (Messi), no en ~100 como los partidos totales de selección.
+
+    Si apariciones_seleccion ya viene calculado (cálculos en lote sobre
+    todo el pool), se usa directo y no se consulta la base por nombre.
     """
     puntaje = 0
 
@@ -101,10 +105,10 @@ def puntaje_fama_jugador(valor_mercado, total_apariciones, total_goles, nombre_j
     if total_goles:
         puntaje += min(total_goles / 150 * 10, 10)
 
-    if nombre_jugador:
+    if apariciones_seleccion is None and nombre_jugador:
         apariciones_seleccion = apariciones_seleccion_jugador(nombre_jugador, conexion)
-        if apariciones_seleccion:
-            puntaje += min(apariciones_seleccion / 20 * 35, 35)
+    if apariciones_seleccion:
+        puntaje += min(apariciones_seleccion / 20 * 35, 35)
 
     return round(min(puntaje, 100), 1)
 

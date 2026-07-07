@@ -164,6 +164,8 @@ a { color: inherit; text-decoration: none; }
   color: var(--ft-tinta);
   font-weight: 600;
 }
+/* La fila de dificultad va pegadita a la de liga */
+.ft-dificultades { margin-top: 8px; }
 
 /* HERO */
 .hero {
