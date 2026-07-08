@@ -309,6 +309,7 @@ function pintarPistas(data) {
 function mostrarFinDeJuego(data) {
   juegoTerminado = true;
   input.disabled = true;
+  ftDetenerCronometro();
   document.getElementById("btn-pista").disabled = true;
   document.getElementById("reiniciar-btn").disabled = false;
 
@@ -346,14 +347,25 @@ async function cargarPartida() {
   actualizarContador(data.intentos);
   pintarPistas(data);
 
-  // Partida ya terminada (ej. el diario de hoy ya se jugó)
+  // Partida ya terminada (por tiempo, o el diario de hoy ya jugado)
   if (data.terminado) {
     juegoTerminado = true;
     input.disabled = true;
+    ftDetenerCronometro();
     document.getElementById("btn-pista").disabled = true;
     document.getElementById("reiniciar-btn").disabled = false;
-    mostrarError("Esta partida ya terminó. Reinicia para jugar otra.");
+    if (data.por_tiempo) {
+      ftPintarTiempo(0);
+      mostrarError(`⏱ Se acabó el tiempo. Era ${data.equipo_secreto}.`);
+      resultMsg.classList.add("perdiste");
+      visor.textContent = data.emoji || "🏆";
+      visor.classList.add("revelado");
+    } else {
+      mostrarError("Esta partida ya terminó. Reinicia para jugar otra.");
+    }
+    return;
   }
+  ftIniciarCronometro(data.tiempo_restante, cargarPartida);
 }
 
 async function intentarEquipo() {
@@ -490,3 +502,60 @@ input.focus();
     if (dificultad === dificultadActual) enlace.classList.add("activa");
   });
 })();
+
+
+/* ================================================================
+   CRONÓMETRO DEL LÍMITE DE TIEMPO
+   ================================================================
+   El SERVIDOR manda tiempo_restante y valida la expiración (un
+   cronómetro solo del navegador se burla recargando); aquí se pinta
+   la cuenta regresiva — chip outline que se pone rojo en los últimos
+   10 segundos — y al llegar a cero se consulta el estado real. */
+
+let ftTiempoIntervalo = null;
+
+function ftChipTiempo() {
+  let chip = document.getElementById("ft-tiempo");
+  if (!chip) {
+    chip = document.createElement("p");
+    chip.id = "ft-tiempo";
+    chip.className = "ft-tiempo";
+    const encabezado = document.querySelector(".wordle-header");
+    if (encabezado) encabezado.appendChild(chip);
+  }
+  return chip;
+}
+
+function ftPintarTiempo(restante) {
+  const chip = ftChipTiempo();
+  const minutos = Math.floor(restante / 60);
+  const segundos = String(restante % 60).padStart(2, "0");
+  chip.textContent = `\u23F1 ${minutos}:${segundos}`;
+  chip.classList.toggle("agotandose", restante <= 10);
+}
+
+function ftDetenerCronometro() {
+  if (ftTiempoIntervalo) clearInterval(ftTiempoIntervalo);
+  ftTiempoIntervalo = null;
+}
+
+function ftIniciarCronometro(segundos, alAgotarse) {
+  ftDetenerCronometro();
+  if (segundos === null || segundos === undefined) return;
+  let restante = Math.max(0, Math.floor(segundos));
+  ftPintarTiempo(restante);
+  if (restante <= 0) {
+    // el reloj del servidor puede ir ~1s detras del nuestro: reintentar
+    // con un respiro en vez de martillar el endpoint
+    setTimeout(alAgotarse, 700);
+    return;
+  }
+  ftTiempoIntervalo = setInterval(() => {
+    restante -= 1;
+    ftPintarTiempo(restante);
+    if (restante <= 0) {
+      ftDetenerCronometro();
+      alAgotarse();
+    }
+  }, 1000);
+}

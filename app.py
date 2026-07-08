@@ -5,9 +5,11 @@
 #  El navegador NUNCA sabe quién es el jugador secreto hasta
 #  que el juego termina. Eso lo decide y lo guarda Python.
 # ================================================================
+import os
 import sqlite3
 import random
 import datetime
+import time
 import unicodedata
 from flask import Flask, render_template, jsonify, request, session
 from flask_session import Session
@@ -271,6 +273,49 @@ DIFICULTAD_POR_PLAYER_ID = {
 }
 
 
+# ================================================================
+#  LÍMITE DE TIEMPO
+#
+#  Cada partida guarda su fecha límite en la sesión: la validación
+#  es del lado del SERVIDOR (un cronómetro solo en el navegador se
+#  burla con recargar la página). El frontend muestra la cuenta
+#  regresiva y, al llegar a cero, consulta el estado para confirmar.
+#  Trivia corre por pregunta; los demás, por partida completa.
+# ================================================================
+
+LIMITES_TIEMPO = {
+    "wordle": 180,      # por partida (8 intentos)
+    "grid": 240,        # por tablero 3x3
+    "conexiones": 180,  # por tablero de 16 fichas
+    "trivia": 20,       # por pregunta
+    "escudo": 120,      # por partida (5 intentos)
+}
+
+# Para probar la derrota por tiempo sin esperar minutos:
+# FUTTRIVIA_TIEMPO_PRUEBA=5 acorta todos los límites a 5 segundos.
+if os.environ.get("FUTTRIVIA_TIEMPO_PRUEBA"):
+    _segundos_prueba = int(os.environ["FUTTRIVIA_TIEMPO_PRUEBA"])
+    LIMITES_TIEMPO = {juego: _segundos_prueba for juego in LIMITES_TIEMPO}
+
+
+def iniciar_limite(juego, modo):
+    session[f"{juego}_{modo}_limite"] = time.time() + LIMITES_TIEMPO[juego]
+
+
+def tiempo_restante(juego, modo):
+    """Segundos que le quedan a la partida/pregunta (None si no hay reloj:
+    partidas viejas en sesión de antes de esta función)."""
+    limite = session.get(f"{juego}_{modo}_limite")
+    if limite is None:
+        return None
+    return max(0, int(limite - time.time()))
+
+
+def tiempo_agotado(juego, modo):
+    restante = tiempo_restante(juego, modo)
+    return restante is not None and restante <= 0
+
+
 def _unico_o_error(candidatos, nombre_buscado):
     if len(candidatos) == 1:
         return candidatos[0], None
@@ -408,6 +453,8 @@ def iniciar_partida_wordle(modo, liga="todas", dificultad="todas"):
     session[f"wordle_{modo}_pistas_usadas"] = []
     session[f"wordle_{modo}_liga"] = liga
     session[f"wordle_{modo}_dificultad"] = dificultad
+    session[f"wordle_{modo}_por_tiempo"] = False
+    iniciar_limite("wordle", modo)
 
     if modo == "diario":
         session["wordle_diario_fecha"] = datetime.date.today().isoformat()
@@ -464,6 +511,46 @@ def wordle():
 #  RUTAS DE API (JSON) — Las usa JavaScript
 # ================================================================
 
+def finalizar_wordle_por_tiempo(modo):
+    """Si el reloj llegó a cero con la partida viva, se pierde. Regresa
+    True si la partida acaba de terminar por tiempo."""
+    clave_terminado = f"wordle_{modo}_terminado"
+    if not session.get(clave_terminado) and tiempo_agotado("wordle", modo):
+        session[clave_terminado] = True
+        session[f"wordle_{modo}_por_tiempo"] = True
+        registrar_resultado("wordle", modo, "perdido", {
+            "por_tiempo": True,
+            "jugador": session[f"wordle_{modo}_secreto"],
+        })
+        return True
+    return False
+
+
+@app.route("/api/wordle")
+def wordle_info():
+    """Estado de la partida: el frontend lo usa para sincronizar el
+    cronómetro y para confirmar la derrota cuando llega a cero."""
+    modo = request.args.get("modo", "practica")
+    if modo not in ("diario", "practica"):
+        modo = "practica"
+
+    clave_secreto = f"wordle_{modo}_secreto"
+    if clave_secreto not in session:
+        return jsonify({"error": "No hay partida activa"}), 400
+
+    finalizar_wordle_por_tiempo(modo)
+    terminado = session[f"wordle_{modo}_terminado"]
+
+    return jsonify({
+        "modo": modo,
+        "intentos": session[f"wordle_{modo}_intentos"],
+        "terminado": terminado,
+        "por_tiempo": session.get(f"wordle_{modo}_por_tiempo", False),
+        "tiempo_restante": tiempo_restante("wordle", modo),
+        "secreto": session[clave_secreto] if terminado else None,
+    })
+
+
 @app.route("/api/jugadores")
 def lista_jugadores():
     """Devuelve solo los nombres, para el autocomplete del input.
@@ -496,6 +583,9 @@ def intentar():
 
     if clave_secreto not in session:
         return jsonify({"error": "No hay partida activa. Recarga la página."}), 400
+
+    if finalizar_wordle_por_tiempo(modo):
+        return jsonify({"error": f"⏱ Se acabó el tiempo. Era {session[clave_secreto]}."}), 400
 
     if session.get(clave_terminado):
         return jsonify({"error": "El juego ya terminó."}), 400
@@ -562,6 +652,8 @@ def wordle_pista():
 
     if clave_secreto not in session:
         return jsonify({"error": "No hay partida activa"}), 400
+    if finalizar_wordle_por_tiempo(modo):
+        return jsonify({"error": f"⏱ Se acabó el tiempo. Era {session[clave_secreto]}."}), 400
     if session.get(clave_terminado):
         return jsonify({"error": "El juego ya terminó"}), 400
     if session[clave_intentos] >= 7:
@@ -798,6 +890,8 @@ def iniciar_nuevo_grid(modo, liga="todas", dificultad="todas"):
     session[f"grid_{modo}_resueltas"] = {}
     session[f"grid_{modo}_liga"] = liga
     session[f"grid_{modo}_dificultad"] = dificultad
+    session[f"grid_{modo}_por_tiempo"] = False
+    iniciar_limite("grid", modo)
 
     if modo == "diario":
         session["grid_diario_fecha"] = datetime.date.today().isoformat()
@@ -828,6 +922,21 @@ def grid_page():
     return render_template("grid.html")
 
 
+def finalizar_grid_por_tiempo(modo):
+    """El grid se pierde si el reloj llega a cero antes de las 9 celdas."""
+    if session.get(f"grid_{modo}_por_tiempo"):
+        return False  # ya estaba perdido por tiempo
+    completo = len(session.get(f"grid_{modo}_resueltas", {})) == 9
+    if not completo and tiempo_agotado("grid", modo):
+        session[f"grid_{modo}_por_tiempo"] = True
+        registrar_resultado("grid", modo, "perdido", {
+            "por_tiempo": True,
+            "resueltas": len(session.get(f"grid_{modo}_resueltas", {})),
+        })
+        return True
+    return False
+
+
 @app.route("/api/grid")
 def grid_info():
     modo = request.args.get("modo", "practica")
@@ -838,12 +947,16 @@ def grid_info():
     if clave not in session or session[clave] is None:
         return jsonify({"error": "No hay grid activo"}), 400
 
+    finalizar_grid_por_tiempo(modo)
+
     return jsonify({
-    "modo": modo,
-    "filas": session[clave]["filas"],
-    "columnas": session[clave]["columnas"],
-    "resueltas": session[f"grid_{modo}_resueltas"],
-})
+        "modo": modo,
+        "filas": session[clave]["filas"],
+        "columnas": session[clave]["columnas"],
+        "resueltas": session[f"grid_{modo}_resueltas"],
+        "por_tiempo": session.get(f"grid_{modo}_por_tiempo", False),
+        "tiempo_restante": tiempo_restante("grid", modo),
+    })
 
 
 @app.route("/api/grid/intentar", methods=["POST"])
@@ -856,6 +969,9 @@ def grid_intentar():
     clave = f"grid_{modo}"
     if clave not in session or session[clave] is None:
         return jsonify({"error": "No hay grid activo"}), 400
+
+    if finalizar_grid_por_tiempo(modo) or session.get(f"grid_{modo}_por_tiempo"):
+        return jsonify({"error": "⏱ Se acabó el tiempo. Reinicia para jugar otro tablero."}), 400
 
     fila = data.get("fila")
     columna = data.get("columna")
@@ -932,6 +1048,9 @@ def grid_pista():
     clave = f"grid_{modo}"
     if clave not in session or session[clave] is None:
         return jsonify({"error": "No hay grid activo"}), 400
+
+    if finalizar_grid_por_tiempo(modo) or session.get(f"grid_{modo}_por_tiempo"):
+        return jsonify({"error": "⏱ Se acabó el tiempo. Reinicia para jugar otro tablero."}), 400
 
     fila = data.get("fila")
     columna = data.get("columna")
@@ -1069,6 +1188,8 @@ def iniciar_nuevas_conexiones(modo, liga="todas", dificultad="todas"):
     session[f"conexiones_{modo}_errores"] = 0
     session[f"conexiones_{modo}_liga"] = liga
     session[f"conexiones_{modo}_dificultad"] = dificultad
+    session[f"conexiones_{modo}_por_tiempo"] = False
+    iniciar_limite("conexiones", modo)
 
     if modo == "diario":
         session["conexiones_diario_fecha"] = datetime.date.today().isoformat()
@@ -1099,6 +1220,25 @@ def conexiones_page():
     return render_template("conexiones.html")
 
 
+def finalizar_conexiones_por_tiempo(modo):
+    """Al agotarse el tiempo se consumen los errores permitidos: así la
+    lógica existente de derrota (errores >= máximo) aplica sola."""
+    juego = session.get(f"conexiones_{modo}")
+    if juego is None or session.get(f"conexiones_{modo}_por_tiempo"):
+        return False
+    resueltos = session[f"conexiones_{modo}_resueltos"]
+    ya_termino = (
+        session[f"conexiones_{modo}_errores"] >= MAX_ERRORES_CONEXIONES
+        or len(resueltos) == len(juego["grupos"])
+    )
+    if not ya_termino and tiempo_agotado("conexiones", modo):
+        session[f"conexiones_{modo}_errores"] = MAX_ERRORES_CONEXIONES
+        session[f"conexiones_{modo}_por_tiempo"] = True
+        registrar_resultado("conexiones", modo, "perdido", {"por_tiempo": True})
+        return True
+    return False
+
+
 @app.route("/api/conexiones")
 def conexiones_info():
     modo = request.args.get("modo", "practica")
@@ -1108,6 +1248,8 @@ def conexiones_info():
     clave = f"conexiones_{modo}"
     if clave not in session or session[clave] is None:
         return jsonify({"error": "No hay partida activa"}), 400
+
+    finalizar_conexiones_por_tiempo(modo)
 
     juego = session[clave]
     resueltos = session[f"conexiones_{modo}_resueltos"]
@@ -1127,6 +1269,8 @@ def conexiones_info():
         "grupos_resueltos": grupos_resueltos_info,
         "errores": session[f"conexiones_{modo}_errores"],
         "errores_max": MAX_ERRORES_CONEXIONES,
+        "por_tiempo": session.get(f"conexiones_{modo}_por_tiempo", False),
+        "tiempo_restante": tiempo_restante("conexiones", modo),
         "terminado": (
             len(resueltos) == len(juego["grupos"])
             or session[f"conexiones_{modo}_errores"] >= MAX_ERRORES_CONEXIONES
@@ -1143,6 +1287,9 @@ def conexiones_intentar():
     clave = f"conexiones_{modo}"
     if clave not in session or session[clave] is None:
         return jsonify({"error": "No hay partida activa"}), 400
+
+    if finalizar_conexiones_por_tiempo(modo):
+        return jsonify({"error": "⏱ Se acabó el tiempo. Reinicia para jugar otro tablero."}), 400
 
     juego = session[clave]
     clave_resueltos = f"conexiones_{modo}_resueltos"
@@ -1219,6 +1366,9 @@ def conexiones_pista():
     clave = f"conexiones_{modo}"
     if clave not in session or session[clave] is None:
         return jsonify({"error": "No hay partida activa"}), 400
+
+    if finalizar_conexiones_por_tiempo(modo) or session.get(f"conexiones_{modo}_por_tiempo"):
+        return jsonify({"error": "⏱ Se acabó el tiempo. Reinicia para jugar otro tablero."}), 400
 
     juego = session[clave]
     resueltos = session[f"conexiones_{modo}_resueltos"]
@@ -1606,6 +1756,10 @@ def iniciar_nueva_trivia(modo, liga="todas", dificultad="todas"):
     session[f"trivia_{modo}_aciertos"] = 0
     session[f"trivia_{modo}_liga"] = liga
     session[f"trivia_{modo}_dificultad"] = dificultad
+    # El reloj de trivia corre POR PREGUNTA: se arranca cuando el
+    # frontend pide cada pregunta (limite_para dice a cuál pertenece
+    # el reloj vigente, para que recargar no lo reinicie).
+    session[f"trivia_{modo}_limite_para"] = None
 
     if modo == "diario":
         session["trivia_diario_fecha"] = datetime.date.today().isoformat()
@@ -1661,16 +1815,41 @@ def trivia_info():
     preguntas = session[clave_preguntas]
     total = len(preguntas)
 
+    # ¿Se venció el reloj de la pregunta en pantalla? Cuenta como fallo
+    # y se avanza a la siguiente (el usuario "pierde esa pregunta").
+    pregunta_expirada = False
+    if (
+        actual < total
+        and session.get(f"trivia_{modo}_limite_para") == actual
+        and tiempo_agotado("trivia", modo)
+    ):
+        pregunta_expirada = True
+        session[f"trivia_{modo}_actual"] += 1
+        actual += 1
+        if actual >= total:
+            registrar_resultado("trivia", modo, "completado", {
+                "aciertos": session[f"trivia_{modo}_aciertos"], "total": total,
+                "ultima_por_tiempo": True,
+            })
+
     if actual >= total:
         return jsonify({
-            "modo": modo, "terminado": True,
+            "modo": modo, "terminado": True, "pregunta_expirada": pregunta_expirada,
             "aciertos": session[f"trivia_{modo}_aciertos"], "total": total,
         })
+
+    # Al servir una pregunta por PRIMERA vez arranca su reloj;
+    # recargar la misma pregunta no lo reinicia.
+    if session.get(f"trivia_{modo}_limite_para") != actual:
+        iniciar_limite("trivia", modo)
+        session[f"trivia_{modo}_limite_para"] = actual
 
     pregunta_actual = preguntas[actual]
     return jsonify({
         "modo": modo, "terminado": False, "numero_pregunta": actual + 1,
         "total_preguntas": total, "aciertos": session[f"trivia_{modo}_aciertos"],
+        "pregunta_expirada": pregunta_expirada,
+        "tiempo_restante": tiempo_restante("trivia", modo),
         **pregunta_publica(pregunta_actual),
     })
 
@@ -1694,6 +1873,24 @@ def trivia_responder():
 
     if actual >= total:
         return jsonify({"error": "El juego ya terminó"}), 400
+
+    # Respuesta que llega con el reloj vencido: cuenta como fallo
+    if (
+        session.get(f"trivia_{modo}_limite_para") == actual
+        and tiempo_agotado("trivia", modo)
+    ):
+        pregunta = preguntas[actual]
+        session[clave_actual] += 1
+        terminado = session[clave_actual] >= total
+        if terminado:
+            registrar_resultado("trivia", modo, "completado", {
+                "aciertos": session[clave_aciertos], "total": total,
+            })
+        return jsonify({
+            "modo": modo, "correcto": False, "tiempo_agotado": True,
+            "respuesta_correcta": pregunta["correcta"],
+            "aciertos": session[clave_aciertos], "terminado": terminado,
+        })
 
     opcion_elegida = data.get("opcion")
     if not es_entero_en_rango(opcion_elegida, 0, 3):
@@ -1831,6 +2028,8 @@ def iniciar_partida_escudo(modo, liga="todas", dificultad="todas"):
     session[f"escudo_{modo}_terminado"] = False
     session[f"escudo_{modo}_liga"] = liga
     session[f"escudo_{modo}_dificultad"] = dificultad
+    session[f"escudo_{modo}_por_tiempo"] = False
+    iniciar_limite("escudo", modo)
 
     if modo == "diario":
         session["escudo_diario_fecha"] = datetime.date.today().isoformat()
@@ -1882,6 +2081,20 @@ def escudo_page():
     return render_template("escudo.html")
 
 
+def finalizar_escudo_por_tiempo(modo):
+    """Si el reloj llegó a cero con la partida viva, se pierde."""
+    clave_terminado = f"escudo_{modo}_terminado"
+    if not session.get(clave_terminado) and tiempo_agotado("escudo", modo):
+        session[clave_terminado] = True
+        session[f"escudo_{modo}_por_tiempo"] = True
+        registrar_resultado("escudo", modo, "perdido", {
+            "por_tiempo": True,
+            "equipo": session[f"escudo_{modo}_secreto"],
+        })
+        return True
+    return False
+
+
 @app.route("/api/escudo")
 def escudo_info():
     modo = request.args.get("modo", "practica")
@@ -1892,6 +2105,7 @@ def escudo_info():
     if clave_secreto not in session:
         return jsonify({"error": "No hay partida activa"}), 400
 
+    finalizar_escudo_por_tiempo(modo)
     intentos = session[f"escudo_{modo}_intentos"]
     terminado = session[f"escudo_{modo}_terminado"]
 
@@ -1900,6 +2114,9 @@ def escudo_info():
         "intentos": intentos,
         "intentos_max": MAX_INTENTOS_ESCUDO,
         "terminado": terminado,
+        "por_tiempo": session.get(f"escudo_{modo}_por_tiempo", False),
+        "tiempo_restante": tiempo_restante("escudo", modo),
+        "equipo_secreto": session[clave_secreto] if terminado else None,
         **obtener_pista(session[clave_secreto], intentos),
     })
 
@@ -1917,6 +2134,8 @@ def escudo_intentar():
 
     if clave_secreto not in session:
         return jsonify({"error": "No hay partida activa"}), 400
+    if finalizar_escudo_por_tiempo(modo):
+        return jsonify({"error": f"⏱ Se acabó el tiempo. Era {session[clave_secreto]}."}), 400
     if session[clave_terminado]:
         return jsonify({"error": "El juego ya terminó"}), 400
 
@@ -1977,6 +2196,8 @@ def escudo_pista():
 
     if clave_secreto not in session:
         return jsonify({"error": "No hay partida activa"}), 400
+    if finalizar_escudo_por_tiempo(modo):
+        return jsonify({"error": f"⏱ Se acabó el tiempo. Era {session[clave_secreto]}."}), 400
     if session[clave_terminado]:
         return jsonify({"error": "El juego ya terminó"}), 400
     if session[clave_intentos] >= MAX_INTENTOS_ESCUDO - 1:

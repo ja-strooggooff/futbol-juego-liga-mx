@@ -329,8 +329,16 @@ async function cargarGrid() {
     }
   });
 
-  if (Object.keys(data.resueltas).length === 9) {
+  if (data.por_tiempo) {
+    ftDetenerCronometro();
+    ftPintarTiempo(0);
+    limpiarSeleccion();
+    mostrarMensaje("⏱ Se acabó el tiempo. Reinicia para jugar otro tablero.", "perdiste");
+  } else if (Object.keys(data.resueltas).length === 9) {
+    ftDetenerCronometro();
     mostrarMensaje("¡Completaste el grid!", "ganaste");
+  } else {
+    ftIniciarCronometro(data.tiempo_restante, cargarGrid);
   }
 }
 
@@ -405,6 +413,7 @@ async function intentarCelda() {
   input.value = "";
 
   if (data.completo) {
+    ftDetenerCronometro();
     mostrarMensaje("¡GOL! Completaste el grid 9/9.", "ganaste");
   }
 }
@@ -555,3 +564,60 @@ cargarGrid();
     if (dificultad === dificultadActual) enlace.classList.add("activa");
   });
 })();
+
+
+/* ================================================================
+   CRONÓMETRO DEL LÍMITE DE TIEMPO
+   ================================================================
+   El SERVIDOR manda tiempo_restante y valida la expiración (un
+   cronómetro solo del navegador se burla recargando); aquí se pinta
+   la cuenta regresiva — chip outline que se pone rojo en los últimos
+   10 segundos — y al llegar a cero se consulta el estado real. */
+
+let ftTiempoIntervalo = null;
+
+function ftChipTiempo() {
+  let chip = document.getElementById("ft-tiempo");
+  if (!chip) {
+    chip = document.createElement("p");
+    chip.id = "ft-tiempo";
+    chip.className = "ft-tiempo";
+    const encabezado = document.querySelector(".wordle-header");
+    if (encabezado) encabezado.appendChild(chip);
+  }
+  return chip;
+}
+
+function ftPintarTiempo(restante) {
+  const chip = ftChipTiempo();
+  const minutos = Math.floor(restante / 60);
+  const segundos = String(restante % 60).padStart(2, "0");
+  chip.textContent = `\u23F1 ${minutos}:${segundos}`;
+  chip.classList.toggle("agotandose", restante <= 10);
+}
+
+function ftDetenerCronometro() {
+  if (ftTiempoIntervalo) clearInterval(ftTiempoIntervalo);
+  ftTiempoIntervalo = null;
+}
+
+function ftIniciarCronometro(segundos, alAgotarse) {
+  ftDetenerCronometro();
+  if (segundos === null || segundos === undefined) return;
+  let restante = Math.max(0, Math.floor(segundos));
+  ftPintarTiempo(restante);
+  if (restante <= 0) {
+    // el reloj del servidor puede ir ~1s detras del nuestro: reintentar
+    // con un respiro en vez de martillar el endpoint
+    setTimeout(alAgotarse, 700);
+    return;
+  }
+  ftTiempoIntervalo = setInterval(() => {
+    restante -= 1;
+    ftPintarTiempo(restante);
+    if (restante <= 0) {
+      ftDetenerCronometro();
+      alAgotarse();
+    }
+  }, 1000);
+}

@@ -167,6 +167,28 @@ a { color: inherit; text-decoration: none; }
 /* La fila de dificultad va pegadita a la de liga */
 .ft-dificultades { margin-top: 8px; }
 
+/* CRONÓMETRO DEL LÍMITE DE TIEMPO (en los 5 juegos) */
+.ft-tiempo {
+  display: inline-flex;
+  margin-top: 14px;
+  padding: 6px 16px;
+  border: 1px solid var(--borde);
+  border-radius: 4px;
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  color: var(--texto-sub);
+  font-variant-numeric: tabular-nums;
+}
+.ft-tiempo.agotandose {
+  border-color: var(--ft-error);
+  color: var(--ft-error);
+  animation: ft-tiempo-pulso 1s ease infinite;
+}
+@keyframes ft-tiempo-pulso { 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) {
+  .ft-tiempo.agotandose { animation: none; }
+}
+
 /* HERO */
 .hero {
   position: relative;
