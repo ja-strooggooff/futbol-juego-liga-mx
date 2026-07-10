@@ -283,23 +283,27 @@ DIFICULTAD_POR_PLAYER_ID = {
 #  Trivia corre por pregunta; los demás, por partida completa.
 # ================================================================
 
-LIMITES_TIEMPO = {
-    "wordle": 180,      # por partida (8 intentos)
-    "grid": 240,        # por tablero 3x3
-    "conexiones": 180,  # por tablero de 16 fichas
-    "trivia": 20,       # por pregunta
-    "escudo": 120,      # por partida (5 intentos)
-}
+# El tiempo es el TERCER selector del usuario (combinable con liga y
+# dificultad). En trivia el tiempo elegido aplica al QUIZ COMPLETO
+# (las 5 preguntas comparten un solo reloj), no por pregunta.
+TIEMPOS_JUGABLES = {"30": 30, "60": 60, "90": 90, "120": 120}
+TIEMPO_DEFECTO = "120"
 
-# Para probar la derrota por tiempo sin esperar minutos:
-# FUTTRIVIA_TIEMPO_PRUEBA=5 acorta todos los límites a 5 segundos.
+
+def tiempo_valido(valor):
+    return valor if valor in TIEMPOS_JUGABLES else TIEMPO_DEFECTO
+
+
+# Para probar la derrota por tiempo sin esperar:
+# FUTTRIVIA_TIEMPO_PRUEBA=5 fuerza todos los relojes a 5 segundos.
+_SEGUNDOS_PRUEBA = None
 if os.environ.get("FUTTRIVIA_TIEMPO_PRUEBA"):
-    _segundos_prueba = int(os.environ["FUTTRIVIA_TIEMPO_PRUEBA"])
-    LIMITES_TIEMPO = {juego: _segundos_prueba for juego in LIMITES_TIEMPO}
+    _SEGUNDOS_PRUEBA = int(os.environ["FUTTRIVIA_TIEMPO_PRUEBA"])
 
 
-def iniciar_limite(juego, modo):
-    session[f"{juego}_{modo}_limite"] = time.time() + LIMITES_TIEMPO[juego]
+def iniciar_limite(juego, modo, tiempo=TIEMPO_DEFECTO):
+    segundos = _SEGUNDOS_PRUEBA or TIEMPOS_JUGABLES[tiempo_valido(tiempo)]
+    session[f"{juego}_{modo}_limite"] = time.time() + segundos
 
 
 def tiempo_restante(juego, modo):
@@ -430,20 +434,24 @@ def pool_wordle(liga, dificultad):
     return pool if pool else JUGADORES_POR_LIGA[liga_valida(liga)]
 
 
-def obtener_jugador_del_dia(liga="todas", dificultad="todas"):
+def obtener_jugador_del_dia(liga="todas", dificultad="todas", tiempo=TIEMPO_DEFECTO):
     hoy = datetime.date.today().isoformat()
-    # Con todo en 'todas' la semilla es solo la fecha (compatibilidad con
-    # el reto diario que ya estaba corriendo); cada combo tiene el suyo.
-    semilla = hoy if liga == "todas" and dificultad == "todas" else f"{hoy}-{liga}-{dificultad}"
+    # Con todo en default la semilla es solo la fecha (compatibilidad con
+    # el reto diario que ya estaba corriendo); cada combo tiene el suyo
+    # (incluido el tiempo: si no, cambiar de reloj regalaría tiempo
+    # fresco para el mismo secreto del día).
+    todo_default = liga == "todas" and dificultad == "todas" and tiempo == TIEMPO_DEFECTO
+    semilla = hoy if todo_default else f"{hoy}-{liga}-{dificultad}-{tiempo}"
     generador = random.Random(semilla)
     return generador.choice(pool_wordle(liga, dificultad))
 
 
-def iniciar_partida_wordle(modo, liga="todas", dificultad="todas"):
+def iniciar_partida_wordle(modo, liga="todas", dificultad="todas", tiempo=TIEMPO_DEFECTO):
     liga = liga_valida(liga)
     dificultad = dificultad_valida(dificultad)
+    tiempo = tiempo_valido(tiempo)
     if modo == "diario":
-        jugador_secreto = obtener_jugador_del_dia(liga, dificultad)
+        jugador_secreto = obtener_jugador_del_dia(liga, dificultad, tiempo)
     else:
         jugador_secreto = random.choice(pool_wordle(liga, dificultad))
 
@@ -453,20 +461,23 @@ def iniciar_partida_wordle(modo, liga="todas", dificultad="todas"):
     session[f"wordle_{modo}_pistas_usadas"] = []
     session[f"wordle_{modo}_liga"] = liga
     session[f"wordle_{modo}_dificultad"] = dificultad
+    session[f"wordle_{modo}_tiempo"] = tiempo
     session[f"wordle_{modo}_por_tiempo"] = False
-    iniciar_limite("wordle", modo)
+    iniciar_limite("wordle", modo, tiempo)
 
     if modo == "diario":
         session["wordle_diario_fecha"] = datetime.date.today().isoformat()
 
 
-def necesita_partida_nueva(modo, liga="todas", dificultad="todas"):
+def necesita_partida_nueva(modo, liga="todas", dificultad="todas", tiempo=TIEMPO_DEFECTO):
     clave_secreto = f"wordle_{modo}_secreto"
     if clave_secreto not in session:
         return True
     if session.get(f"wordle_{modo}_liga", "todas") != liga_valida(liga):
         return True
     if session.get(f"wordle_{modo}_dificultad", "todas") != dificultad_valida(dificultad):
+        return True
+    if session.get(f"wordle_{modo}_tiempo", TIEMPO_DEFECTO) != tiempo_valido(tiempo):
         return True
     if modo == "diario":
         fecha_guardada = session.get("wordle_diario_fecha")
@@ -502,8 +513,9 @@ def wordle():
         modo = "practica"
     liga = liga_valida(request.args.get("liga", "todas"))
     dificultad = dificultad_valida(request.args.get("dificultad", "todas"))
-    if necesita_partida_nueva(modo, liga, dificultad):
-        iniciar_partida_wordle(modo, liga, dificultad)
+    tiempo = tiempo_valido(request.args.get("tiempo", TIEMPO_DEFECTO))
+    if necesita_partida_nueva(modo, liga, dificultad, tiempo):
+        iniciar_partida_wordle(modo, liga, dificultad, tiempo)
     return render_template("wordle.html")
 
 
@@ -698,6 +710,7 @@ def wordle_reiniciar():
         "practica",
         session.get("wordle_practica_liga", "todas"),
         session.get("wordle_practica_dificultad", "todas"),
+        session.get("wordle_practica_tiempo", TIEMPO_DEFECTO),
     )
     return jsonify({"ok": True})
 
@@ -868,21 +881,26 @@ def jugador_cumple(jugador, tipo, valor):
     return jugador[tipo] == valor
 
 
-def prefijo_generador(base, liga, dificultad):
-    """Semilla diaria distinta por combinación; el caso todas/todas usa
-    la base a secas (compatibilidad con los diarios que ya corrían)."""
+def prefijo_generador(base, liga, dificultad, tiempo=TIEMPO_DEFECTO):
+    """Semilla diaria distinta por combinación; el caso todo-default usa
+    la base a secas (compatibilidad con los diarios que ya corrían).
+    El tiempo también entra: si no, cambiar de reloj repetiría el mismo
+    tablero del día con tiempo fresco."""
     partes = [base]
     if liga != "todas":
         partes.append(liga)
     if dificultad != "todas":
         partes.append(dificultad)
+    if tiempo != TIEMPO_DEFECTO:
+        partes.append(f"t{tiempo}")
     return "-".join(partes)
 
 
-def iniciar_nuevo_grid(modo, liga="todas", dificultad="todas"):
+def iniciar_nuevo_grid(modo, liga="todas", dificultad="todas", tiempo=TIEMPO_DEFECTO):
     liga = liga_valida(liga)
     dificultad = dificultad_valida(dificultad)
-    generador = obtener_generador(modo, prefijo_generador("grid", liga, dificultad))
+    tiempo = tiempo_valido(tiempo)
+    generador = obtener_generador(modo, prefijo_generador("grid", liga, dificultad, tiempo))
     grid = generar_grid(generador, liga=liga, dificultad=dificultad)
 
     session[f"grid_{modo}"] = grid
@@ -890,20 +908,23 @@ def iniciar_nuevo_grid(modo, liga="todas", dificultad="todas"):
     session[f"grid_{modo}_resueltas"] = {}
     session[f"grid_{modo}_liga"] = liga
     session[f"grid_{modo}_dificultad"] = dificultad
+    session[f"grid_{modo}_tiempo"] = tiempo
     session[f"grid_{modo}_por_tiempo"] = False
-    iniciar_limite("grid", modo)
+    iniciar_limite("grid", modo, tiempo)
 
     if modo == "diario":
         session["grid_diario_fecha"] = datetime.date.today().isoformat()
 
 
-def necesita_grid_nuevo(modo, liga="todas", dificultad="todas"):
+def necesita_grid_nuevo(modo, liga="todas", dificultad="todas", tiempo=TIEMPO_DEFECTO):
     clave = f"grid_{modo}"
     if clave not in session or session[clave] is None:
         return True
     if session.get(f"grid_{modo}_liga", "todas") != liga_valida(liga):
         return True
     if session.get(f"grid_{modo}_dificultad", "todas") != dificultad_valida(dificultad):
+        return True
+    if session.get(f"grid_{modo}_tiempo", TIEMPO_DEFECTO) != tiempo_valido(tiempo):
         return True
     if modo == "diario":
         if session.get("grid_diario_fecha") != datetime.date.today().isoformat():
@@ -917,8 +938,9 @@ def grid_page():
         modo = "practica"
     liga = liga_valida(request.args.get("liga", "todas"))
     dificultad = dificultad_valida(request.args.get("dificultad", "todas"))
-    if necesita_grid_nuevo(modo, liga, dificultad):
-        iniciar_nuevo_grid(modo, liga, dificultad)
+    tiempo = tiempo_valido(request.args.get("tiempo", TIEMPO_DEFECTO))
+    if necesita_grid_nuevo(modo, liga, dificultad, tiempo):
+        iniciar_nuevo_grid(modo, liga, dificultad, tiempo)
     return render_template("grid.html")
 
 
@@ -1035,6 +1057,7 @@ def grid_reiniciar():
         "practica",
         session.get("grid_practica_liga", "todas"),
         session.get("grid_practica_dificultad", "todas"),
+        session.get("grid_practica_tiempo", TIEMPO_DEFECTO),
     )
     return jsonify({"ok": True})
 
@@ -1167,10 +1190,11 @@ def generar_conexiones(generador, max_intentos=200, liga="todas", dificultad="to
     return resultado
 
 
-def iniciar_nuevas_conexiones(modo, liga="todas", dificultad="todas"):
+def iniciar_nuevas_conexiones(modo, liga="todas", dificultad="todas", tiempo=TIEMPO_DEFECTO):
     liga = liga_valida(liga)
     dificultad = dificultad_valida(dificultad)
-    generador = obtener_generador(modo, prefijo_generador("conexiones", liga, dificultad))
+    tiempo = tiempo_valido(tiempo)
+    generador = obtener_generador(modo, prefijo_generador("conexiones", liga, dificultad, tiempo))
     resultado = generar_conexiones(generador, liga=liga, dificultad=dificultad)
 
     if resultado is None:
@@ -1188,20 +1212,23 @@ def iniciar_nuevas_conexiones(modo, liga="todas", dificultad="todas"):
     session[f"conexiones_{modo}_errores"] = 0
     session[f"conexiones_{modo}_liga"] = liga
     session[f"conexiones_{modo}_dificultad"] = dificultad
+    session[f"conexiones_{modo}_tiempo"] = tiempo
     session[f"conexiones_{modo}_por_tiempo"] = False
-    iniciar_limite("conexiones", modo)
+    iniciar_limite("conexiones", modo, tiempo)
 
     if modo == "diario":
         session["conexiones_diario_fecha"] = datetime.date.today().isoformat()
 
 
-def necesita_conexiones_nuevas(modo, liga="todas", dificultad="todas"):
+def necesita_conexiones_nuevas(modo, liga="todas", dificultad="todas", tiempo=TIEMPO_DEFECTO):
     clave = f"conexiones_{modo}"
     if clave not in session or session[clave] is None:
         return True
     if session.get(f"conexiones_{modo}_liga", "todas") != liga_valida(liga):
         return True
     if session.get(f"conexiones_{modo}_dificultad", "todas") != dificultad_valida(dificultad):
+        return True
+    if session.get(f"conexiones_{modo}_tiempo", TIEMPO_DEFECTO) != tiempo_valido(tiempo):
         return True
     if modo == "diario":
         if session.get("conexiones_diario_fecha") != datetime.date.today().isoformat():
@@ -1215,8 +1242,9 @@ def conexiones_page():
         modo = "practica"
     liga = liga_valida(request.args.get("liga", "todas"))
     dificultad = dificultad_valida(request.args.get("dificultad", "todas"))
-    if necesita_conexiones_nuevas(modo, liga, dificultad):
-        iniciar_nuevas_conexiones(modo, liga, dificultad)
+    tiempo = tiempo_valido(request.args.get("tiempo", TIEMPO_DEFECTO))
+    if necesita_conexiones_nuevas(modo, liga, dificultad, tiempo):
+        iniciar_nuevas_conexiones(modo, liga, dificultad, tiempo)
     return render_template("conexiones.html")
 
 
@@ -1352,6 +1380,7 @@ def conexiones_reiniciar():
         "practica",
         session.get("conexiones_practica_liga", "todas"),
         session.get("conexiones_practica_dificultad", "todas"),
+        session.get("conexiones_practica_tiempo", TIEMPO_DEFECTO),
     )
     return jsonify({"ok": True})
 
@@ -1736,7 +1765,7 @@ def generar_pool_preguntas(generador, cantidad=10, liga="todas", dificultad="tod
     return pool
 
 
-def iniciar_nueva_trivia(modo, liga="todas", dificultad="todas"):
+def iniciar_nueva_trivia(modo, liga="todas", dificultad="todas", tiempo=TIEMPO_DEFECTO):
     """
     Ahora arma un pool mixto (preguntas fijas + preguntas reales de
     partidos históricos), lo mezcla, y elige las primeras 5.
@@ -1747,7 +1776,8 @@ def iniciar_nueva_trivia(modo, liga="todas", dificultad="todas"):
     """
     liga = liga_valida(liga)
     dificultad = dificultad_valida(dificultad)
-    generador = obtener_generador(modo, prefijo_generador("trivia", liga, dificultad))
+    tiempo = tiempo_valido(tiempo)
+    generador = obtener_generador(modo, prefijo_generador("trivia", liga, dificultad, tiempo))
     pool = generar_pool_preguntas(generador, cantidad=10, liga=liga, dificultad=dificultad)
     generador.shuffle(pool)
 
@@ -1756,16 +1786,17 @@ def iniciar_nueva_trivia(modo, liga="todas", dificultad="todas"):
     session[f"trivia_{modo}_aciertos"] = 0
     session[f"trivia_{modo}_liga"] = liga
     session[f"trivia_{modo}_dificultad"] = dificultad
-    # El reloj de trivia corre POR PREGUNTA: se arranca cuando el
-    # frontend pide cada pregunta (limite_para dice a cuál pertenece
-    # el reloj vigente, para que recargar no lo reinicie).
-    session[f"trivia_{modo}_limite_para"] = None
+    session[f"trivia_{modo}_tiempo"] = tiempo
+    session[f"trivia_{modo}_por_tiempo"] = False
+    # El reloj de trivia es para el QUIZ COMPLETO: un solo límite que
+    # corre desde que arranca la partida, compartido por las 5 preguntas.
+    iniciar_limite("trivia", modo, tiempo)
 
     if modo == "diario":
         session["trivia_diario_fecha"] = datetime.date.today().isoformat()
 
 
-def necesita_trivia_nueva(modo, liga="todas", dificultad="todas"):
+def necesita_trivia_nueva(modo, liga="todas", dificultad="todas", tiempo=TIEMPO_DEFECTO):
     clave = f"trivia_{modo}_preguntas"
     if clave not in session:
         return True
@@ -1773,10 +1804,26 @@ def necesita_trivia_nueva(modo, liga="todas", dificultad="todas"):
         return True
     if session.get(f"trivia_{modo}_dificultad", "todas") != dificultad_valida(dificultad):
         return True
+    if session.get(f"trivia_{modo}_tiempo", TIEMPO_DEFECTO) != tiempo_valido(tiempo):
+        return True
     if modo == "diario":
         if session.get("trivia_diario_fecha") != datetime.date.today().isoformat():
             return True
     return False
+
+
+def finalizar_trivia_por_tiempo(modo, total):
+    """El reloj del quiz llegó a cero: las preguntas que faltaban se
+    pierden y la partida queda registrada una sola vez."""
+    if session.get(f"trivia_{modo}_por_tiempo"):
+        return
+    session[f"trivia_{modo}_por_tiempo"] = True
+    session[f"trivia_{modo}_actual"] = total
+    registrar_resultado("trivia", modo, "completado", {
+        "aciertos": session[f"trivia_{modo}_aciertos"],
+        "total": total,
+        "por_tiempo": True,
+    })
 
 
 def pregunta_publica(pregunta_completa):
@@ -1796,8 +1843,9 @@ def trivia_page():
         modo = "practica"
     liga = liga_valida(request.args.get("liga", "todas"))
     dificultad = dificultad_valida(request.args.get("dificultad", "todas"))
-    if necesita_trivia_nueva(modo, liga, dificultad):
-        iniciar_nueva_trivia(modo, liga, dificultad)
+    tiempo = tiempo_valido(request.args.get("tiempo", TIEMPO_DEFECTO))
+    if necesita_trivia_nueva(modo, liga, dificultad, tiempo):
+        iniciar_nueva_trivia(modo, liga, dificultad, tiempo)
     return render_template("trivia.html")
 
 
@@ -1815,40 +1863,22 @@ def trivia_info():
     preguntas = session[clave_preguntas]
     total = len(preguntas)
 
-    # ¿Se venció el reloj de la pregunta en pantalla? Cuenta como fallo
-    # y se avanza a la siguiente (el usuario "pierde esa pregunta").
-    pregunta_expirada = False
-    if (
-        actual < total
-        and session.get(f"trivia_{modo}_limite_para") == actual
-        and tiempo_agotado("trivia", modo)
-    ):
-        pregunta_expirada = True
-        session[f"trivia_{modo}_actual"] += 1
-        actual += 1
-        if actual >= total:
-            registrar_resultado("trivia", modo, "completado", {
-                "aciertos": session[f"trivia_{modo}_aciertos"], "total": total,
-                "ultima_por_tiempo": True,
-            })
+    # ¿Se acabó el reloj del QUIZ? Las preguntas restantes se pierden.
+    if actual < total and tiempo_agotado("trivia", modo):
+        finalizar_trivia_por_tiempo(modo, total)
+        actual = total
 
     if actual >= total:
         return jsonify({
-            "modo": modo, "terminado": True, "pregunta_expirada": pregunta_expirada,
+            "modo": modo, "terminado": True,
+            "por_tiempo": session.get(f"trivia_{modo}_por_tiempo", False),
             "aciertos": session[f"trivia_{modo}_aciertos"], "total": total,
         })
-
-    # Al servir una pregunta por PRIMERA vez arranca su reloj;
-    # recargar la misma pregunta no lo reinicia.
-    if session.get(f"trivia_{modo}_limite_para") != actual:
-        iniciar_limite("trivia", modo)
-        session[f"trivia_{modo}_limite_para"] = actual
 
     pregunta_actual = preguntas[actual]
     return jsonify({
         "modo": modo, "terminado": False, "numero_pregunta": actual + 1,
         "total_preguntas": total, "aciertos": session[f"trivia_{modo}_aciertos"],
-        "pregunta_expirada": pregunta_expirada,
         "tiempo_restante": tiempo_restante("trivia", modo),
         **pregunta_publica(pregunta_actual),
     })
@@ -1874,22 +1904,12 @@ def trivia_responder():
     if actual >= total:
         return jsonify({"error": "El juego ya terminó"}), 400
 
-    # Respuesta que llega con el reloj vencido: cuenta como fallo
-    if (
-        session.get(f"trivia_{modo}_limite_para") == actual
-        and tiempo_agotado("trivia", modo)
-    ):
-        pregunta = preguntas[actual]
-        session[clave_actual] += 1
-        terminado = session[clave_actual] >= total
-        if terminado:
-            registrar_resultado("trivia", modo, "completado", {
-                "aciertos": session[clave_aciertos], "total": total,
-            })
+    # Respuesta que llega con el reloj del quiz vencido: se acabó todo
+    if tiempo_agotado("trivia", modo):
+        finalizar_trivia_por_tiempo(modo, total)
         return jsonify({
             "modo": modo, "correcto": False, "tiempo_agotado": True,
-            "respuesta_correcta": pregunta["correcta"],
-            "aciertos": session[clave_aciertos], "terminado": terminado,
+            "aciertos": session[clave_aciertos], "terminado": True,
         })
 
     opcion_elegida = data.get("opcion")
@@ -1926,6 +1946,7 @@ def trivia_reiniciar():
         "practica",
         session.get("trivia_practica_liga", "todas"),
         session.get("trivia_practica_dificultad", "todas"),
+        session.get("trivia_practica_tiempo", TIEMPO_DEFECTO),
     )
     return jsonify({"ok": True})
 
@@ -2017,10 +2038,11 @@ def pool_escudos(liga, dificultad):
     return equipos
 
 
-def iniciar_partida_escudo(modo, liga="todas", dificultad="todas"):
+def iniciar_partida_escudo(modo, liga="todas", dificultad="todas", tiempo=TIEMPO_DEFECTO):
     liga = liga_valida(liga)
     dificultad = dificultad_valida(dificultad)
-    generador = obtener_generador(modo, prefijo_generador("escudo", liga, dificultad))
+    tiempo = tiempo_valido(tiempo)
+    generador = obtener_generador(modo, prefijo_generador("escudo", liga, dificultad, tiempo))
     equipo_secreto = generador.choice(pool_escudos(liga, dificultad))
 
     session[f"escudo_{modo}_secreto"] = equipo_secreto
@@ -2028,20 +2050,23 @@ def iniciar_partida_escudo(modo, liga="todas", dificultad="todas"):
     session[f"escudo_{modo}_terminado"] = False
     session[f"escudo_{modo}_liga"] = liga
     session[f"escudo_{modo}_dificultad"] = dificultad
+    session[f"escudo_{modo}_tiempo"] = tiempo
     session[f"escudo_{modo}_por_tiempo"] = False
-    iniciar_limite("escudo", modo)
+    iniciar_limite("escudo", modo, tiempo)
 
     if modo == "diario":
         session["escudo_diario_fecha"] = datetime.date.today().isoformat()
 
 
-def necesita_escudo_nuevo(modo, liga="todas", dificultad="todas"):
+def necesita_escudo_nuevo(modo, liga="todas", dificultad="todas", tiempo=TIEMPO_DEFECTO):
     clave = f"escudo_{modo}_secreto"
     if clave not in session:
         return True
     if session.get(f"escudo_{modo}_liga", "todas") != liga_valida(liga):
         return True
     if session.get(f"escudo_{modo}_dificultad", "todas") != dificultad_valida(dificultad):
+        return True
+    if session.get(f"escudo_{modo}_tiempo", TIEMPO_DEFECTO) != tiempo_valido(tiempo):
         return True
     if modo == "diario":
         if session.get("escudo_diario_fecha") != datetime.date.today().isoformat():
@@ -2076,8 +2101,9 @@ def escudo_page():
         modo = "practica"
     liga = liga_valida(request.args.get("liga", "todas"))
     dificultad = dificultad_valida(request.args.get("dificultad", "todas"))
-    if necesita_escudo_nuevo(modo, liga, dificultad):
-        iniciar_partida_escudo(modo, liga, dificultad)
+    tiempo = tiempo_valido(request.args.get("tiempo", TIEMPO_DEFECTO))
+    if necesita_escudo_nuevo(modo, liga, dificultad, tiempo):
+        iniciar_partida_escudo(modo, liga, dificultad, tiempo)
     return render_template("escudo.html")
 
 
@@ -2176,6 +2202,7 @@ def escudo_reiniciar():
         "practica",
         session.get("escudo_practica_liga", "todas"),
         session.get("escudo_practica_dificultad", "todas"),
+        session.get("escudo_practica_tiempo", TIEMPO_DEFECTO),
     )
     return jsonify({"ok": True})
 

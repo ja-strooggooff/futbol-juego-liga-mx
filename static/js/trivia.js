@@ -263,6 +263,7 @@ const params = new URLSearchParams(window.location.search);
 const modo = params.get("modo") === "diario" ? "diario" : "practica";
 const ligaActual = ["mx", "argentina"].includes(params.get("liga")) ? params.get("liga") : "todas";
 const dificultadActual = ["facil", "media", "dificil", "legendaria"].includes(params.get("dificultad")) ? params.get("dificultad") : "todas";
+const tiempoActual = ["30", "60", "90", "120"].includes(params.get("tiempo")) ? params.get("tiempo") : "120";
 
 const progreso = document.getElementById("trivia-progreso");
 const tarjeta = document.getElementById("trivia-tarjeta");
@@ -313,7 +314,7 @@ async function cargarPregunta() {
   }
 
   if (data.terminado) {
-    mostrarPantallaFinal(data.aciertos, data.total);
+    mostrarPantallaFinal(data.aciertos, data.total, data.por_tiempo);
     return;
   }
 
@@ -324,9 +325,8 @@ async function cargarPregunta() {
   pantallaFinal.classList.add("hidden");
   tarjeta.classList.remove("hidden");
   ocultarMensaje();
-  if (data.pregunta_expirada) {
-    mostrarError("⏱ Se acabó el tiempo de esa pregunta: cuenta como fallo. Va la siguiente.");
-  }
+  // El reloj es del QUIZ completo: cada carga lo re-sincroniza con lo
+  // que le quede a la partida según el servidor.
   ftIniciarCronometro(data.tiempo_restante, cargarPregunta);
 
   progreso.innerHTML =
@@ -370,15 +370,22 @@ async function elegirOpcion(indice, boton) {
 
   respondida = true;
   btnPista.disabled = true;
-  ftDetenerCronometro();
 
   const botones = opcionesDiv.querySelectorAll(".trivia-opcion");
   botones.forEach((b) => { b.disabled = true; });
+
+  // La respuesta llegó con el reloj del quiz ya vencido: se acabó todo
+  // (el servidor no revela la correcta en este caso)
+  if (data.tiempo_agotado) {
+    ftDetenerCronometro();
+    mostrarError("⏱ Se acabó el tiempo del quiz.");
+    btnSiguiente.textContent = "Ver resultado";
+    btnSiguiente.classList.remove("hidden");
+    return;
+  }
+
   botones[data.respuesta_correcta].classList.add("correcta-final");
   if (!data.correcto) boton.classList.add("fallida");
-  if (data.tiempo_agotado) {
-    mostrarError("⏱ Se acabó el tiempo de esta pregunta: cuenta como fallo.");
-  }
 
   progreso.innerHTML = progreso.innerHTML.replace(/Aciertos: <strong>\d+<\/strong>/,
     `Aciertos: <strong>${data.aciertos}</strong>`);
@@ -391,15 +398,17 @@ function siguientePregunta() {
   cargarPregunta();
 }
 
-function mostrarPantallaFinal(aciertos, total) {
+function mostrarPantallaFinal(aciertos, total, porTiempo) {
   ftDetenerCronometro();
   tarjeta.classList.add("hidden");
   btnSiguiente.classList.add("hidden");
   btnPista.disabled = true;
   progreso.textContent = "Partida terminada";
+  if (porTiempo) ftPintarTiempo(0);
 
   let mensaje;
-  if (aciertos === total) mensaje = "¡GOL de media cancha! Partida perfecta.";
+  if (porTiempo) mensaje = "⏱ Se acabó el tiempo del quiz. Las preguntas sin responder cuentan como fallo.";
+  else if (aciertos === total) mensaje = "¡GOL de media cancha! Partida perfecta.";
   else if (aciertos >= Math.ceil(total * 0.6)) mensaje = "Buen partido. Casi perfecto.";
   else if (aciertos >= Math.ceil(total * 0.4)) mensaje = "Empate digno. Se puede mejorar.";
   else mensaje = "Derrota dura… la revancha es con Reiniciar.";
@@ -478,22 +487,31 @@ ftTransicionPelota("entrada");
 ftConectarSalidas();
 cargarPregunta();
 
-/* Selectores de liga y dificultad: cada uno marca su opción activa y
-   arma los enlaces conservando el modo Y el otro filtro (así cualquier
-   combinación liga × dificultad es alcanzable). */
+/* Selectores de liga, dificultad y tiempo: cada uno marca su opción
+   activa y arma los enlaces conservando el modo Y los otros dos
+   filtros (así cualquier combinación es alcanzable). */
 (function ftInicializarSelectores() {
   const base = window.location.pathname;
+  const enlaceCombo = (liga, dificultad, tiempo) =>
+    `${base}?modo=${modo}&liga=${liga}&dificultad=${dificultad}&tiempo=${tiempo}`;
+
   const ligas = document.getElementById("ft-ligas");
   if (ligas) ligas.querySelectorAll("a").forEach((enlace) => {
     const liga = enlace.dataset.liga;
-    enlace.href = `${base}?modo=${modo}&liga=${liga}&dificultad=${dificultadActual}`;
+    enlace.href = enlaceCombo(liga, dificultadActual, tiempoActual);
     if (liga === ligaActual) enlace.classList.add("activa");
   });
   const dificultades = document.getElementById("ft-dificultades");
   if (dificultades) dificultades.querySelectorAll("a").forEach((enlace) => {
     const dificultad = enlace.dataset.dificultad;
-    enlace.href = `${base}?modo=${modo}&liga=${ligaActual}&dificultad=${dificultad}`;
+    enlace.href = enlaceCombo(ligaActual, dificultad, tiempoActual);
     if (dificultad === dificultadActual) enlace.classList.add("activa");
+  });
+  const tiempos = document.getElementById("ft-tiempos");
+  if (tiempos) tiempos.querySelectorAll("a").forEach((enlace) => {
+    const tiempo = enlace.dataset.tiempo;
+    enlace.href = enlaceCombo(ligaActual, dificultadActual, tiempo);
+    if (tiempo === tiempoActual) enlace.classList.add("activa");
   });
 })();
 

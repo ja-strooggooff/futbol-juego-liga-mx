@@ -250,6 +250,7 @@ const params = new URLSearchParams(window.location.search);
 const modo = params.get("modo") === "diario" ? "diario" : "practica";
 const ligaActual = ["mx", "argentina"].includes(params.get("liga")) ? params.get("liga") : "todas";
 const dificultadActual = ["facil", "media", "dificil", "legendaria"].includes(params.get("dificultad")) ? params.get("dificultad") : "todas";
+const tiempoActual = ["30", "60", "90", "120"].includes(params.get("tiempo")) ? params.get("tiempo") : "120";
 
 const visor = document.getElementById("escudo-visor");
 const pistasDiv = document.getElementById("escudo-pistas");
@@ -484,22 +485,31 @@ input.addEventListener("keydown", (e) => {
 });
 input.focus();
 
-/* Selectores de liga y dificultad: cada uno marca su opción activa y
-   arma los enlaces conservando el modo Y el otro filtro (así cualquier
-   combinación liga × dificultad es alcanzable). */
+/* Selectores de liga, dificultad y tiempo: cada uno marca su opción
+   activa y arma los enlaces conservando el modo Y los otros dos
+   filtros (así cualquier combinación es alcanzable). */
 (function ftInicializarSelectores() {
   const base = window.location.pathname;
+  const enlaceCombo = (liga, dificultad, tiempo) =>
+    `${base}?modo=${modo}&liga=${liga}&dificultad=${dificultad}&tiempo=${tiempo}`;
+
   const ligas = document.getElementById("ft-ligas");
   if (ligas) ligas.querySelectorAll("a").forEach((enlace) => {
     const liga = enlace.dataset.liga;
-    enlace.href = `${base}?modo=${modo}&liga=${liga}&dificultad=${dificultadActual}`;
+    enlace.href = enlaceCombo(liga, dificultadActual, tiempoActual);
     if (liga === ligaActual) enlace.classList.add("activa");
   });
   const dificultades = document.getElementById("ft-dificultades");
   if (dificultades) dificultades.querySelectorAll("a").forEach((enlace) => {
     const dificultad = enlace.dataset.dificultad;
-    enlace.href = `${base}?modo=${modo}&liga=${ligaActual}&dificultad=${dificultad}`;
+    enlace.href = enlaceCombo(ligaActual, dificultad, tiempoActual);
     if (dificultad === dificultadActual) enlace.classList.add("activa");
+  });
+  const tiempos = document.getElementById("ft-tiempos");
+  if (tiempos) tiempos.querySelectorAll("a").forEach((enlace) => {
+    const tiempo = enlace.dataset.tiempo;
+    enlace.href = enlaceCombo(ligaActual, dificultadActual, tiempo);
+    if (tiempo === tiempoActual) enlace.classList.add("activa");
   });
 })();
 
